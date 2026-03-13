@@ -28,14 +28,12 @@ class MyRidesScreen extends StatelessWidget {
             onPressed: () => Navigator.of(context).pop(),
           ),
           title: const Text('My Activity', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
-          bottom: TabBar(
-            indicatorColor: const Color(0xFF9D8FFF),
+          bottom: const TabBar(
+            indicatorColor: Color(0xFF9D8FFF),
             indicatorWeight: 3,
             labelColor: Colors.white,
             unselectedLabelColor: Colors.white54,
-            labelStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
-            unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.w500, fontSize: 13),
-            tabs: const [
+            tabs: [
               Tab(
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
@@ -73,6 +71,35 @@ class MyRidesScreen extends StatelessWidget {
 class RideList extends StatelessWidget {
   final bool isLeader;
   const RideList({super.key, required this.isLeader});
+
+  // Moved the logic here so the widget can access it
+  Future<void> _completeRide(BuildContext context, String rideId, String leaderId) async {
+    try {
+      await FirebaseFirestore.instance
+          .collection('rides')
+          .doc(rideId)
+          .update({'status': 'completed'});
+
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(leaderId)
+          .update({
+        'ridesCompleted': FieldValue.increment(1),
+      });
+
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Ride marked as completed! Trust score updated.')),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -112,80 +139,68 @@ class RideList extends StatelessWidget {
                   isLeader ? 'No rides posted yet' : 'No joined rides yet',
                   style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 17, color: Color(0xFF0F0C29)),
                 ),
-                const SizedBox(height: 6),
-                Text(
-                  isLeader ? 'Head back and post your first ride!' : 'Find an open ride and join it!',
-                  style: TextStyle(color: Colors.grey[500], fontSize: 13),
-                ),
               ],
             ),
           );
         }
 
         return ListView.builder(
-          padding: const EdgeInsets.all(16),
           itemCount: docs.length,
+          padding: const EdgeInsets.all(15),
           itemBuilder: (ctx, index) {
             final ride = docs[index];
-            return Container(
+            final String status = ride['status'] ?? 'open';
+
+            return Card(
               margin: const EdgeInsets.only(bottom: 12),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(20),
-                boxShadow: [
-                  BoxShadow(color: Colors.black.withOpacity(0.06), blurRadius: 16, offset: const Offset(0, 4)),
-                ],
-              ),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
               child: ListTile(
-                contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
-                leading: Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: isLeader
-                          ? [const Color(0xFF6C63FF), const Color(0xFFB06AB3)]
-                          : [const Color(0xFF11998E), const Color(0xFF38EF7D)],
-                    ),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Icon(
-                    isLeader ? Icons.drive_eta_rounded : Icons.person_pin_circle_rounded,
-                    color: Colors.white,
-                    size: 20,
-                  ),
-                ),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                 title: Text(
                   '${ride['source']} → ${ride['destination']}',
                   style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14, color: Color(0xFF0F0C29)),
                 ),
-                subtitle: Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: Row(
-                    children: [
-                      Icon(Icons.person_rounded, size: 12, color: Colors.grey[400]),
-                      const SizedBox(width: 4),
-                      Text(ride['leaderName'], style: TextStyle(fontSize: 12, color: Colors.grey[500])),
-                    ],
+                subtitle: Text(
+                  "Status: ${status.toUpperCase()}",
+                  style: TextStyle(
+                    fontSize: 12, 
+                    color: status == 'open' ? Colors.green : Colors.grey,
+                    fontWeight: FontWeight.bold
                   ),
                 ),
-                trailing: Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF6C63FF).withOpacity(0.1),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(Icons.chat_bubble_outline_rounded, color: Color(0xFF6C63FF), size: 18),
-                ),
-                onTap: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (ctx) => ChatScreen(
-                        rideId: ride.id,
-                        rideDestination: ride['destination'],
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Only show the completion checkmark if the user is the leader AND the ride is open
+                    if (isLeader && status == 'open')
+                      IconButton(
+                        icon: const Icon(Icons.check_circle_outline_rounded, color: Colors.green),
+                        onPressed: () => _completeRide(context, ride.id, user.uid),
+                      ),
+                    
+                    const SizedBox(width: 4),
+                    
+                    Container(
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF6C63FF).withOpacity(0.1),
+                        shape: BoxShape.circle,
+                      ),
+                      child: IconButton(
+                        icon: const Icon(Icons.chat_bubble_outline_rounded, color: Color(0xFF6C63FF), size: 20),
+                        onPressed: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (ctx) => ChatScreen(
+                                rideId: ride.id,
+                                rideDestination: ride['destination'],
+                              ),
+                            ),
+                          );
+                        },
                       ),
                     ),
-                  );
-                },
+                  ],
+                ),
               ),
             );
           },
