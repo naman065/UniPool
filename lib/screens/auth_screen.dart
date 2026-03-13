@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 class AuthScreen extends StatefulWidget {
   const AuthScreen({super.key});
@@ -19,7 +20,23 @@ class _AuthScreenState extends State<AuthScreen> {
   bool isSignUp = false;
 
   // ─── Helpers ───────────────────────────────────────────────────────────────
+  Future<void> _resetPassword() async {
+    final email = emailController.text.trim();
+    if (email.isEmpty) {
+      _showSnack('Please enter your email first to reset your password.', isError: true);
+      return;
+    }
 
+    try {
+      setState(() => loading = true);
+      await FirebaseAuth.instance.sendPasswordResetEmail(email: email);
+      _showSnack('Password reset link sent! Check your inbox.', isError: false);
+    } on FirebaseAuthException catch (e) {
+      _showSnack(e.message ?? 'Failed to send reset email.', isError: true);
+    } finally {
+      if (mounted) setState(() => loading = false);
+    }
+  }
   void _showSnack(String message, {bool isError = true}) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -61,10 +78,19 @@ class _AuthScreenState extends State<AuthScreen> {
 
     setState(() => loading = true);
     try {
-      await FirebaseAuth.instance.signInWithEmailAndPassword(
+     UserCredential cred = await FirebaseAuth.instance.signInWithEmailAndPassword(
         email: email,
         password: password,
       );
+
+      // Check if the email is verified
+      if (!cred.user!.emailVerified) {
+        // Send another email just in case they lost the first one
+        await cred.user!.sendEmailVerification();
+        await FirebaseAuth.instance.signOut(); // Log them back out
+        _showSnack('Please verify your email. A new link has been sent.', isError: true);
+        return;
+      }
     } on FirebaseAuthException catch (e) {
       String message;
       switch (e.code) {
@@ -114,11 +140,30 @@ class _AuthScreenState extends State<AuthScreen> {
 
     setState(() => loading = true);
     try {
-      await FirebaseAuth.instance.createUserWithEmailAndPassword(
+// 1. Create the user
+      UserCredential cred = await FirebaseAuth.instance.createUserWithEmailAndPassword(
         email: email,
         password: password,
       );
-      _showSnack('Account created! Welcome to UniPool 🚕', isError: false);
+
+      // 2. Send the verification email
+      await cred.user!.sendEmailVerification();
+      _showSnack('Verification email sent! Please check your inbox.', isError: false);
+      // 3. Create the user document in Firestore so 'ridesCompleted' exists
+      await FirebaseFirestore.instance.collection('users').doc(cred.user!.uid).set({
+        'uid': cred.user!.uid,
+        'email': email,
+        'ridesCompleted': 0,
+        'createdAt': Timestamp.now(),
+      });
+
+      // 4. Force sign out and switch UI back to Login mode
+      await FirebaseAuth.instance.signOut();
+      _showSnack('Account created! Please verify your email before logging in.', isError: false);
+      
+      setState(() {
+        isSignUp = false;
+      });
     } on FirebaseAuthException catch (e) {
       String message;
       switch (e.code) {
@@ -286,7 +331,7 @@ class _AuthScreenState extends State<AuthScreen> {
                           Align(
                             alignment: Alignment.centerRight,
                             child: TextButton(
-                              onPressed: () {},
+                              onPressed: _resetPassword,
                               child: const Text(
                                 'Forgot password?',
                                 style: TextStyle(
