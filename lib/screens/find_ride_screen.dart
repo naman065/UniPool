@@ -2,11 +2,38 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:unipool/screens/chat_screen.dart';
 
-class FindRideScreen extends StatelessWidget {
+class FindRideScreen extends StatefulWidget {
   const FindRideScreen({super.key});
 
   @override
+  State<FindRideScreen> createState() => _FindRideScreenState();
+}
+
+class _FindRideScreenState extends State<FindRideScreen> {
+  // Use the exact same locations as your CreateRideScreen
+  final List<String> _locations = [
+    'All Locations',
+    'Hall 1', 'Hall 2', 'Hall 3', 'Hall 4', 'Hall 12', 'Hall 13',
+    'Academic Area', 'Library', 'Main Gate', 'Health Centre', 'Shopping Centre',
+    'IIT Kanpur', 'Kalyanpur Metro', 'SPM Hospital', 'Vishwavidyalaya',
+    'Gurudev Chauraha', 'Geeta Nagar', 'Rawatpur', 'GSVM Medical College',
+    'Moti Jheel', 'Chunniganj', 'Naveen Market', 'Bada Chauraha', 'Nayaganj',
+    'Kanpur Central Railway Station', 'Lucknow Airport',
+  ];
+
+  String _filterDestination = 'All Locations';
+
+  @override
   Widget build(BuildContext context) {
+    // Build the query based on selection [cite: 67]
+    Query query = FirebaseFirestore.instance
+        .collection('rides')
+        .where('status', isEqualTo: 'open');
+
+    if (_filterDestination != 'All Locations') {
+      query = query.where('destination', isEqualTo: _filterDestination);
+    }
+
     return Scaffold(
       backgroundColor: const Color(0xFFF4F6FB),
       appBar: AppBar(
@@ -26,62 +53,101 @@ class FindRideScreen extends StatelessWidget {
         ),
         title: const Text('Available Rides', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
       ),
-      body: StreamBuilder(
-        stream: FirebaseFirestore.instance
-            .collection('rides')
-            .where('status', isEqualTo: 'open')
-            .snapshots(),
-        builder: (ctx, AsyncSnapshot<QuerySnapshot> snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator(color: Color(0xFF6C63FF)));
-          }
-
-          if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-            return Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(24),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF6C63FF).withOpacity(0.1),
-                      shape: BoxShape.circle,
+      body: Column(
+        children: [
+          // --- NEW FILTER BAR ---
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              boxShadow: [
+                BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 2)),
+              ],
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.filter_list_rounded, color: Color(0xFF6C63FF), size: 20),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<String>(
+                      value: _filterDestination,
+                      isExpanded: true,
+                      icon: Icon(Icons.keyboard_arrow_down_rounded, color: Colors.grey[400]),
+                      style: const TextStyle(color: Color(0xFF0F0C29), fontWeight: FontWeight.w600, fontSize: 14),
+                      items: _locations.map((loc) {
+                        return DropdownMenuItem(value: loc, child: Text(loc));
+                      }).toList(),
+                      onChanged: (val) {
+                        setState(() {
+                          _filterDestination = val!;
+                        });
+                      },
                     ),
-                    child: const Icon(Icons.search_off_rounded, size: 48, color: Color(0xFF6C63FF)),
                   ),
-                  const SizedBox(height: 18),
-                  const Text('No rides right now', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 18, color: Color(0xFF0F0C29))),
-                  const SizedBox(height: 6),
-                  Text('Check back soon or post your own!', style: TextStyle(color: Colors.grey[500], fontSize: 14)),
-                ],
-              ),
-            );
-          }
+                ),
+              ],
+            ),
+          ),
+          
+          // --- RIDES LIST (Moved inside Expanded) ---
+          Expanded(
+            child: StreamBuilder(
+              stream: query.snapshots(),
+              builder: (ctx, AsyncSnapshot<QuerySnapshot> snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator(color: Color(0xFF6C63FF)));
+                }
 
-          final rideDocs = snapshot.data!.docs;
+                if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                  return Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(24),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF6C63FF).withOpacity(0.1),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(Icons.search_off_rounded, size: 48, color: Color(0xFF6C63FF)),
+                        ),
+                        const SizedBox(height: 18),
+                        const Text('No rides found', 
+                          style: TextStyle(fontWeight: FontWeight.w800, fontSize: 18, color: Color(0xFF0F0C29))),
+                        const SizedBox(height: 6),
+                        Text('Try changing your destination filter!', style: TextStyle(color: Colors.grey[500], fontSize: 14)),
+                      ],
+                    ),
+                  );
+                }
 
-          return ListView.builder(
-            padding: const EdgeInsets.all(16),
-            itemCount: rideDocs.length,
-            itemBuilder: (ctx, index) {
-              var ride = rideDocs[index];
-              return _RideCard(
-                ride: ride,
-                onTap: () => _showRideDetails(context, ride),
-              );
-            },
-          );
-        },
+                final rideDocs = snapshot.data!.docs;
+                return ListView.builder(
+                  padding: const EdgeInsets.all(16),
+                  itemCount: rideDocs.length,
+                  itemBuilder: (ctx, index) {
+                    var ride = rideDocs[index];
+                    return _RideCard(
+                      ride: ride,
+                      onTap: () => _showRideDetails(context, ride),
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+        ],
       ),
     );
   }
 
+  // Keeping your existing detail dialog and helper methods exactly as they were [cite: 76, 106]
   void _showRideDetails(BuildContext context, DocumentSnapshot ride) async {
     final leaderData = await FirebaseFirestore.instance
         .collection('users')
         .doc(ride['leaderId'])
         .get();
-
     final ridesCount = (leaderData.exists && (leaderData.data() as Map).containsKey('ridesCompleted'))
         ? leaderData['ridesCompleted']
         : 0;
