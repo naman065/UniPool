@@ -28,6 +28,80 @@ class _AuthScreenState extends State<AuthScreen> {
     super.dispose();
   }
 
+  void _showSnack(String message, {bool isError = true}) {
+    if (!mounted) {
+      return;
+    }
+
+    showAppSnackBar(context, message, isError: isError);
+  }
+
+  Future<void> _showStatusDialog({
+    required String title,
+    required String message,
+    required IconData icon,
+    required Color color,
+  }) async {
+    if (!mounted) {
+      return;
+    }
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          backgroundColor: AppColors.surface,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24),
+          ),
+          titlePadding: const EdgeInsets.fromLTRB(24, 24, 24, 8),
+          contentPadding: const EdgeInsets.fromLTRB(24, 0, 24, 20),
+          actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+          title: Row(
+            children: [
+              AppIconBadge(icon: icon, color: color),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  title,
+                  style: const TextStyle(
+                    color: AppColors.ink,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 20,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          content: Text(
+            message,
+            style: const TextStyle(color: AppColors.muted, height: 1.5),
+          ),
+          actions: [
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: const Text('OK'),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<bool> _sendVerificationEmail(User user) async {
+    await user.reload();
+    final refreshedUser = FirebaseAuth.instance.currentUser ?? user;
+    if (refreshedUser.emailVerified) {
+      return false;
+    }
+
+    await refreshedUser.sendEmailVerification();
+    return true;
+  }
+
   Future<void> _resetPassword() async {
     final email = emailController.text.trim();
     if (email.isEmpty) {
@@ -41,7 +115,13 @@ class _AuthScreenState extends State<AuthScreen> {
     try {
       setState(() => loading = true);
       await FirebaseAuth.instance.sendPasswordResetEmail(email: email);
-      _showSnack('Password reset link sent. Check your inbox.', isError: false);
+      await _showStatusDialog(
+        title: 'Reset email sent',
+        message:
+            'If an account exists for $email, Firebase has sent a password reset link. Check Inbox, Spam, and Promotions.',
+        icon: Icons.lock_reset_rounded,
+        color: AppColors.secondary,
+      );
     } on FirebaseAuthException catch (e) {
       _showSnack(e.message ?? 'Failed to send reset email.', isError: true);
     } finally {
@@ -49,14 +129,6 @@ class _AuthScreenState extends State<AuthScreen> {
         setState(() => loading = false);
       }
     }
-  }
-
-  void _showSnack(String message, {bool isError = true}) {
-    if (!mounted) {
-      return;
-    }
-
-    showAppSnackBar(context, message, isError: isError);
   }
 
   Future<void> login() async {
@@ -75,12 +147,30 @@ class _AuthScreenState extends State<AuthScreen> {
         password: password,
       );
 
-      if (!cred.user!.emailVerified) {
-        await cred.user!.sendEmailVerification();
+      await cred.user?.reload();
+      final refreshedUser = FirebaseAuth.instance.currentUser;
+      final usesPasswordAuth =
+          refreshedUser?.providerData.any(
+            (provider) => provider.providerId == 'password',
+          ) ??
+          true;
+
+      if (usesPasswordAuth && !(refreshedUser?.emailVerified ?? false)) {
+        var resentLink = false;
+        try {
+          resentLink = await _sendVerificationEmail(cred.user!);
+        } on FirebaseAuthException {
+          // Even if resend fails, keep the user out until they verify.
+        }
+
         await FirebaseAuth.instance.signOut();
-        _showSnack(
-          'Verify your email before signing in. A fresh link has been sent.',
-          isError: true,
+        await _showStatusDialog(
+          title: 'Email not verified',
+          message: resentLink
+              ? 'Please verify $email before signing in. A fresh verification link has been sent.'
+              : 'Please verify $email before signing in. If you already signed up recently, use the latest verification email in your inbox.',
+          icon: Icons.mark_email_unread_rounded,
+          color: AppColors.warning,
         );
         return;
       }
@@ -138,11 +228,8 @@ class _AuthScreenState extends State<AuthScreen> {
         password: password,
       );
 
-      await cred.user!.sendEmailVerification();
-      _showSnack(
-        'Verification email sent. Please check your inbox.',
-        isError: false,
-      );
+      final verificationSent = await _sendVerificationEmail(cred.user!);
+
       await FirebaseFirestore.instance
           .collection('users')
           .doc(cred.user!.uid)
@@ -155,9 +242,13 @@ class _AuthScreenState extends State<AuthScreen> {
           });
 
       await FirebaseAuth.instance.signOut();
-      _showSnack(
-        'Account created. Verify your email before logging in.',
-        isError: false,
+      await _showStatusDialog(
+        title: 'Account created',
+        message: verificationSent
+            ? 'A verification link was sent to $email. Verify your email before logging in.'
+            : 'Your account was created, but the verification link could not be sent right now. Try logging in again to resend it.',
+        icon: Icons.verified_outlined,
+        color: verificationSent ? AppColors.secondary : AppColors.warning,
       );
 
       setState(() {

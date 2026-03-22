@@ -15,6 +15,13 @@ void main() async {
 class UnipoolApp extends StatelessWidget {
   const UnipoolApp({super.key});
 
+  bool _canAccessHome(User user) {
+    final usesPasswordAuth = user.providerData.any(
+      (provider) => provider.providerId == 'password',
+    );
+    return !usesPasswordAuth || user.emailVerified;
+  }
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
@@ -22,7 +29,7 @@ class UnipoolApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: AppTheme.lightTheme,
       home: StreamBuilder<User?>(
-        stream: FirebaseAuth.instance.authStateChanges(),
+        stream: FirebaseAuth.instance.userChanges(),
         builder: (ctx, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Scaffold(
@@ -45,7 +52,8 @@ class UnipoolApp extends StatelessWidget {
             );
           }
 
-          if (snapshot.hasData) {
+          final user = snapshot.data;
+          if (user != null && _canAccessHome(user)) {
             return const HomeScreen();
           }
 
