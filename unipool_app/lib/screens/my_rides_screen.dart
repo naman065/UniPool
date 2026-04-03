@@ -1,10 +1,12 @@
+import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:unipool/screens/chat_screen.dart';
 import 'package:unipool/theme/app_theme.dart';
 import 'package:unipool/widgets/app_ui.dart';
+import 'package:unipool/models/ride.dart';
+import 'package:unipool/widgets/ride_card.dart';
 
 class MyRidesScreen extends StatelessWidget {
   const MyRidesScreen({super.key});
@@ -189,10 +191,11 @@ class RideList extends StatelessWidget {
           );
         }
 
-        final docs = snapshot.data?.docs.toList() ?? [];
-        docs.sort((a, b) => _rideDate(b).compareTo(_rideDate(a)));
+        final docs = snapshot.data?.docs ?? [];
+        final rides = docs.map((doc) => Ride.fromFirestore(doc)).toList();
+        rides.sort((a, b) => b.rideDate.compareTo(a.rideDate));
 
-        if (docs.isEmpty) {
+        if (rides.isEmpty) {
           return Padding(
             padding: const EdgeInsets.all(20),
             child: AppEmptyState(
@@ -209,123 +212,18 @@ class RideList extends StatelessWidget {
 
         return ListView.builder(
           padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
-          itemCount: docs.length,
+          itemCount: rides.length,
           itemBuilder: (context, index) {
-            final ride = docs[index];
-            final status = (ride['status'] ?? 'open').toString();
+            final ride = rides[index];
 
             return Padding(
               padding: const EdgeInsets.only(bottom: 14),
-              child: AppSurfaceCard(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        AppIconBadge(
-                          icon: isLeader
-                              ? Icons.local_taxi_rounded
-                              : Icons.group_outlined,
-                          color: isLeader
-                              ? AppColors.primary
-                              : AppColors.secondary,
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                '${ride['source']} to ${ride['destination']}',
-                                style: const TextStyle(
-                                  color: AppColors.ink,
-                                  fontWeight: FontWeight.w800,
-                                  fontSize: 17,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                DateFormat(
-                                  'EEE, d MMM yyyy',
-                                ).format(_rideDate(ride)),
-                                style: const TextStyle(
-                                  color: AppColors.muted,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        AppPill(
-                          label: status.toUpperCase(),
-                          foregroundColor: _statusColor(status),
-                          backgroundColor: _statusColor(
-                            status,
-                          ).withValues(alpha: 0.12),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        AppPill(
-                          label: isLeader ? 'You are leading' : 'Joined ride',
-                          icon: isLeader
-                              ? Icons.workspace_premium_outlined
-                              : Icons.verified_user_outlined,
-                        ),
-                        AppPill(
-                          label: ride['leaderName'] ?? 'Student',
-                          icon: Icons.person_outline_rounded,
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    Wrap(
-                      spacing: 10,
-                      runSpacing: 10,
-                      children: [
-                        OutlinedButton.icon(
-                          onPressed: () {
-                            Navigator.of(context).push(
-                              MaterialPageRoute(
-                                builder: (_) => ChatScreen(
-                                  rideId: ride.id,
-                                  rideDestination: ride['destination'],
-                                ),
-                              ),
-                            );
-                          },
-                          icon: const Icon(Icons.chat_bubble_outline_rounded),
-                          label: const Text('Open chat'),
-                        ),
-                        if (isLeader && status == 'open')
-                          FilledButton.icon(
-                            onPressed: () =>
-                                _completeRide(context, ride.id, user.uid),
-                            icon: const Icon(
-                              Icons.check_circle_outline_rounded,
-                            ),
-                            label: const Text('Mark complete'),
-                          ),
-                        if (isLeader)
-                          OutlinedButton.icon(
-                            onPressed: () => _deleteRide(context, ride.id),
-                            icon: const Icon(
-                              Icons.delete_outline_rounded,
-                              color: AppColors.danger,
-                            ),
-                            label: const Text(
-                              'Delete',
-                              style: TextStyle(color: AppColors.danger),
-                            ),
-                          ),
-                      ],
-                    ),
-                  ],
-                ),
+              child: _LeaderRideCard(
+                ride: ride,
+                isLeaderView: isLeader,
+                onTap: () => showRideDetailsSheet(context, ride),
+                onComplete: (id) => _completeRide(context, id, user.uid),
+                onDelete: (id) => _deleteRide(context, id),
               ),
             );
           },
@@ -333,20 +231,47 @@ class RideList extends StatelessWidget {
       },
     );
   }
+}
 
-  DateTime _rideDate(DocumentSnapshot ride) {
-    return DateTime.tryParse(ride['rideDate'].toString()) ?? DateTime.now();
-  }
+class _LeaderRideCard extends MyRideCard {
+  final Function(String) onComplete;
+  final Function(String) onDelete;
 
-  Color _statusColor(String status) {
-    switch (status) {
-      case 'completed':
-        return AppColors.secondary;
-      case 'open':
-        return AppColors.success;
-      default:
-        return AppColors.muted;
-    }
+  const _LeaderRideCard({
+    required super.ride,
+    required super.isLeaderView,
+    super.onTap,
+    required this.onComplete,
+    required this.onDelete,
+  });
+
+  @override
+  Widget? buildBottomAction(BuildContext context) {
+    return Wrap(
+      spacing: 10,
+      runSpacing: 10,
+      children: [
+        super.buildBottomAction(context) ?? const SizedBox.shrink(),
+        if (isLeaderView && ride.isOpen)
+          FilledButton.icon(
+            onPressed: () => onComplete(ride.id),
+            icon: const Icon(Icons.check_circle_outline_rounded),
+            label: const Text('Mark complete'),
+          ),
+        if (isLeaderView)
+          OutlinedButton.icon(
+            onPressed: () => onDelete(ride.id),
+            icon: const Icon(
+              Icons.delete_outline_rounded,
+              color: AppColors.danger,
+            ),
+            label: const Text(
+              'Delete',
+              style: TextStyle(color: AppColors.danger),
+            ),
+          ),
+      ],
+    );
   }
 }
 

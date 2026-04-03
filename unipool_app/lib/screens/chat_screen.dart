@@ -200,14 +200,8 @@ class _ChatScreenState extends State<ChatScreen> {
                   },
                 ),
               ),
-              AnimatedPadding(
-                duration: const Duration(milliseconds: 180),
-                padding: EdgeInsets.fromLTRB(
-                  16,
-                  10,
-                  16,
-                  MediaQuery.of(context).viewInsets.bottom + 16,
-                ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
                 child: AppSurfaceCard(
                   padding: const EdgeInsets.all(12),
                   radius: 28,

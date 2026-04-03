@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import 'package:unipool/data/ride_locations.dart';
 import 'package:unipool/theme/app_theme.dart';
 import 'package:unipool/widgets/app_ui.dart';
+import 'package:unipool/models/ride.dart';
 
 class CreateRideScreen extends StatefulWidget {
   const CreateRideScreen({super.key});
@@ -17,7 +18,15 @@ class _CreateRideScreenState extends State<CreateRideScreen> {
   String? _selectedSource;
   String? _selectedDestination;
   DateTime? _selectedDate;
+  TimeOfDay? _selectedTime;
+  final TextEditingController _fareController = TextEditingController();
   bool _submitting = false;
+
+  @override
+  void dispose() {
+    _fareController.dispose();
+    super.dispose();
+  }
 
   Future<void> _presentDatePicker() async {
     final now = DateTime.now();
@@ -44,13 +53,37 @@ class _CreateRideScreenState extends State<CreateRideScreen> {
     }
   }
 
+  Future<void> _presentTimePicker() async {
+    final pickedTime = await showTimePicker(
+      context: context,
+      initialTime: _selectedTime ?? TimeOfDay.now(),
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: Theme.of(context).colorScheme.copyWith(
+              primary: AppColors.primary,
+              secondary: AppColors.secondary,
+            ),
+          ),
+          child: child!,
+        );
+      },
+    );
+
+    if (pickedTime != null) {
+      setState(() => _selectedTime = pickedTime);
+    }
+  }
+
   Future<void> _submitRide() async {
     if (_selectedSource == null ||
         _selectedDestination == null ||
-        _selectedDate == null) {
+        _selectedDate == null ||
+        _selectedTime == null ||
+        _fareController.text.trim().isEmpty) {
       showAppSnackBar(
         context,
-        'Select a source, destination, and date before posting.',
+        'Select route, date, time, and fare before posting.',
         isError: true,
       );
       return;
@@ -79,16 +112,23 @@ class _CreateRideScreenState extends State<CreateRideScreen> {
           ? data['name'] as String
           : user.email?.split('@').first ?? 'Student';
 
-      await FirebaseFirestore.instance.collection('rides').add({
-        'source': _selectedSource,
-        'destination': _selectedDestination,
-        'rideDate': _selectedDate!.toIso8601String(),
-        'leaderId': user.uid,
-        'leaderName': leaderName,
-        'status': 'open',
-        'participants': [],
-        'createdAt': Timestamp.now(),
-      });
+      final newRide = Ride(
+        id: '', // Will be assigned by Firestore
+        source: _selectedSource!,
+        destination: _selectedDestination!,
+        rideDate: _selectedDate!,
+        leaderId: user.uid,
+        leaderName: leaderName,
+        status: 'open',
+        participants: [],
+        rideTime: _selectedTime!.format(context),
+        fare: _fareController.text.trim(),
+      );
+
+      final rideMap = newRide.toMap();
+      rideMap['createdAt'] = Timestamp.now();
+
+      await FirebaseFirestore.instance.collection('rides').add(rideMap);
 
       if (mounted) {
         Navigator.of(context).pop();
@@ -221,6 +261,69 @@ class _CreateRideScreenState extends State<CreateRideScreen> {
                           ),
                         ),
                       ),
+                      const SizedBox(height: 16),
+                      AppSurfaceCard(
+                        child: InkWell(
+                          onTap: _presentTimePicker,
+                          borderRadius: BorderRadius.circular(26),
+                          child: Row(
+                            children: [
+                              const AppIconBadge(
+                                icon: Icons.schedule_rounded,
+                                color: AppColors.accent,
+                              ),
+                              const SizedBox(width: 14),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Text(
+                                      'Time of departure',
+                                      style: TextStyle(
+                                        color: AppColors.muted,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      _selectedTime == null
+                                          ? 'Approximate time'
+                                          : _selectedTime!.format(context),
+                                      style: const TextStyle(
+                                        color: AppColors.ink,
+                                        fontWeight: FontWeight.w800,
+                                        fontSize: 16,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const Icon(
+                                Icons.arrow_forward_ios_rounded,
+                                color: AppColors.muted,
+                                size: 16,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      AppSurfaceCard(
+                        child: TextField(
+                          controller: _fareController,
+                          maxLength: 40,
+                          decoration: const InputDecoration(
+                            counterText: '',
+                            labelText: 'Fare estimate (e.g., ₹ 150 or by meter)',
+                            prefixIcon: Icon(
+                              Icons.payments_rounded,
+                              color: AppColors.primary,
+                            ),
+                            border: InputBorder.none,
+                          ),
+                          onChanged: (val) => setState(() {}),
+                        ),
+                      ),
                       const SizedBox(height: 24),
                       AppSurfaceCard(
                         color: AppColors.surfaceSoft,
@@ -248,6 +351,20 @@ class _CreateRideScreenState extends State<CreateRideScreen> {
                                   : DateFormat(
                                       'd MMM yyyy',
                                     ).format(_selectedDate!),
+                            ),
+                            const SizedBox(height: 12),
+                            _PreviewRow(
+                              label: 'Time',
+                              value: _selectedTime == null
+                                  ? 'Not set'
+                                  : _selectedTime!.format(context),
+                            ),
+                            const SizedBox(height: 12),
+                            _PreviewRow(
+                              label: 'Fare',
+                              value: _fareController.text.trim().isEmpty
+                                  ? 'Not set'
+                                  : _fareController.text.trim(),
                             ),
                             const SizedBox(height: 12),
                             const _PreviewRow(
