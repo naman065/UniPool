@@ -87,12 +87,18 @@ abstract class BaseRideCard extends StatelessWidget {
             label: ride.fare!,
             icon: Icons.payments_rounded,
           ),
-        if (ride.participantCount > 0)
+        if (ride.participantCount > 0 || ride.participantCount == 0)
           AppPill(
-            label: '${ride.participantCount} joined',
+            label: ride.participantCount >= ride.maxParticipants 
+              ? 'FULL (${ride.participantCount}/${ride.maxParticipants})'
+              : '${ride.participantCount}/${ride.maxParticipants} joined',
             icon: Icons.group_rounded,
-            foregroundColor: Colors.white,
-            backgroundColor: AppColors.primary,
+            foregroundColor: ride.participantCount >= ride.maxParticipants 
+                ? Colors.white 
+                : AppColors.primary,
+            backgroundColor: ride.participantCount >= ride.maxParticipants 
+                ? AppColors.danger 
+                : AppColors.primary.withValues(alpha: 0.12),
           ),
       ],
     );
@@ -206,12 +212,18 @@ class MyRideCard extends BaseRideCard {
             label: ride.fare!,
             icon: Icons.payments_rounded,
           ),
-        if (ride.participantCount > 0)
+        if (ride.participantCount > 0 || ride.participantCount == 0)
           AppPill(
-            label: '${ride.participantCount} joined',
+            label: ride.participantCount >= ride.maxParticipants 
+              ? 'FULL (${ride.participantCount}/${ride.maxParticipants})'
+              : '${ride.participantCount}/${ride.maxParticipants} joined',
             icon: Icons.group_rounded,
-            foregroundColor: Colors.white,
-            backgroundColor: AppColors.primary,
+            foregroundColor: ride.participantCount >= ride.maxParticipants 
+                ? Colors.white 
+                : AppColors.primary,
+            backgroundColor: ride.participantCount >= ride.maxParticipants 
+                ? AppColors.danger 
+                : AppColors.primary.withValues(alpha: 0.12),
           ),
       ],
     );

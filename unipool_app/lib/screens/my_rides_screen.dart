@@ -3,10 +3,12 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
 import 'package:unipool/screens/chat_screen.dart';
+import 'package:unipool/screens/create_ride_screen.dart';
 import 'package:unipool/theme/app_theme.dart';
 import 'package:unipool/widgets/app_ui.dart';
 import 'package:unipool/models/ride.dart';
 import 'package:unipool/widgets/ride_card.dart';
+import 'package:unipool/services/notification_service.dart';
 
 class MyRidesScreen extends StatelessWidget {
   const MyRidesScreen({super.key});
@@ -128,7 +130,7 @@ class RideList extends StatelessWidget {
     }
   }
 
-  Future<void> _deleteRide(BuildContext context, String rideId) async {
+  Future<void> _deleteRide(BuildContext context, Ride ride) async {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) {
@@ -159,13 +161,60 @@ class RideList extends StatelessWidget {
     }
 
     try {
-      await FirebaseFirestore.instance.collection('rides').doc(rideId).delete();
+      if (ride.participants.isNotEmpty) {
+        await NotificationService.sendRideCanceled(ride.participants, ride.destination);
+      }
+      await FirebaseFirestore.instance.collection('rides').doc(ride.id).delete();
       if (context.mounted) {
         showAppSnackBar(context, 'Ride deleted successfully.', isError: false);
       }
     } catch (e) {
       if (context.mounted) {
         showAppSnackBar(context, 'Error deleting ride: $e', isError: true);
+      }
+    }
+  }
+
+  Future<void> _leaveRide(BuildContext context, String rideId, String userId) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: const Text('Leave ride?'),
+          content: const Text(
+            'Are you sure you want to drop out of this ride?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text(
+                'Leave',
+                style: TextStyle(color: AppColors.danger),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirm != true) {
+      return;
+    }
+
+    try {
+      await FirebaseFirestore.instance.collection('rides').doc(rideId).update({
+        'participants': FieldValue.arrayRemove([userId])
+      });
+      if (context.mounted) {
+        showAppSnackBar(context, 'You have left the ride.', isError: false);
+      }
+    } catch (e) {
+      if (context.mounted) {
+        showAppSnackBar(context, 'Error leaving ride: $e', isError: true);
       }
     }
   }
@@ -192,7 +241,27 @@ class RideList extends StatelessWidget {
         }
 
         final docs = snapshot.data?.docs ?? [];
-        final rides = docs.map((doc) => Ride.fromFirestore(doc)).toList();
+        var rides = docs.map((doc) => Ride.fromFirestore(doc)).toList();
+
+        final now = DateTime.now();
+        final today = DateTime(now.year, now.month, now.day);
+
+        rides.removeWhere((ride) {
+          // Drop all past rides universally
+          final rideDay = DateTime(
+              ride.rideDate.year, ride.rideDate.month, ride.rideDate.day);
+          if (rideDay.isBefore(today)) {
+            return true;
+          }
+
+          // If we are looking at 'I Joined', also drop rides we lead to prevent overlap
+          if (!isLeader && ride.leaderId == user.uid) {
+            return true;
+          }
+
+          return false;
+        });
+
         rides.sort((a, b) => b.rideDate.compareTo(a.rideDate));
 
         if (rides.isEmpty) {
@@ -216,16 +285,29 @@ class RideList extends StatelessWidget {
           itemBuilder: (context, index) {
             final ride = rides[index];
 
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 14),
-              child: _LeaderRideCard(
-                ride: ride,
-                isLeaderView: isLeader,
-                onTap: () => showRideDetailsSheet(context, ride),
-                onComplete: (id) => _completeRide(context, id, user.uid),
-                onDelete: (id) => _deleteRide(context, id),
-              ),
-            );
+            if (isLeader) {
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 14),
+                child: _LeaderRideCard(
+                  ride: ride,
+                  isLeaderView: true,
+                  onTap: () => showRideDetailsSheet(context, ride),
+                  onComplete: (id) => _completeRide(context, id, user.uid),
+                  onDelete: (id) => _deleteRide(context, ride),
+                  onEdit: (id) => Navigator.of(context).push(MaterialPageRoute(builder: (_) => CreateRideScreen(existingRide: ride))),
+                ),
+              );
+            } else {
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 14),
+                child: _JoinedRideCard(
+                  ride: ride,
+                  isLeaderView: false,
+                  onTap: () => showRideDetailsSheet(context, ride),
+                  onLeave: (id) => _leaveRide(context, id, user.uid),
+                ),
+              );
+            }
           },
         );
       },
@@ -236,6 +318,7 @@ class RideList extends StatelessWidget {
 class _LeaderRideCard extends MyRideCard {
   final Function(String) onComplete;
   final Function(String) onDelete;
+  final Function(String) onEdit;
 
   const _LeaderRideCard({
     required super.ride,
@@ -243,6 +326,7 @@ class _LeaderRideCard extends MyRideCard {
     super.onTap,
     required this.onComplete,
     required this.onDelete,
+    required this.onEdit,
   });
 
   @override
@@ -258,7 +342,18 @@ class _LeaderRideCard extends MyRideCard {
             icon: const Icon(Icons.check_circle_outline_rounded),
             label: const Text('Mark complete'),
           ),
-        if (isLeaderView)
+        if (isLeaderView) ...[
+          OutlinedButton.icon(
+            onPressed: () => onEdit(ride.id),
+            icon: const Icon(
+              Icons.edit_rounded,
+              color: AppColors.primary,
+            ),
+            label: const Text(
+              'Edit',
+              style: TextStyle(color: AppColors.primary),
+            ),
+          ),
           OutlinedButton.icon(
             onPressed: () => onDelete(ride.id),
             icon: const Icon(
@@ -267,6 +362,41 @@ class _LeaderRideCard extends MyRideCard {
             ),
             label: const Text(
               'Delete',
+              style: TextStyle(color: AppColors.danger),
+            ),
+          ),
+        ]
+      ],
+    );
+  }
+}
+
+class _JoinedRideCard extends MyRideCard {
+  final Function(String) onLeave;
+
+  const _JoinedRideCard({
+    required super.ride,
+    required super.isLeaderView,
+    super.onTap,
+    required this.onLeave,
+  });
+
+  @override
+  Widget? buildBottomAction(BuildContext context) {
+    return Wrap(
+      spacing: 10,
+      runSpacing: 10,
+      children: [
+        super.buildBottomAction(context) ?? const SizedBox.shrink(),
+        if (ride.isOpen)
+          OutlinedButton.icon(
+            onPressed: () => onLeave(ride.id),
+            icon: const Icon(
+              Icons.exit_to_app_rounded,
+              color: AppColors.danger,
+            ),
+            label: const Text(
+              'Leave ride',
               style: TextStyle(color: AppColors.danger),
             ),
           ),

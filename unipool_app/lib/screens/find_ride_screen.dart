@@ -15,8 +15,49 @@ class FindRideScreen extends StatefulWidget {
   State<FindRideScreen> createState() => _FindRideScreenState();
 }
 
+enum TimeFilter { any, morning, afternoon, evening, night }
+
 class _FindRideScreenState extends State<FindRideScreen> {
   String _filterDestination = allLocationsLabel;
+  TimeFilter _timeFilter = TimeFilter.any;
+
+  int? _parseHour(String timeStr) {
+    try {
+      final parts = timeStr.split(RegExp(r'[:\s]'));
+      if (parts.length >= 2) {
+        int hour = int.parse(parts[0]);
+        if (timeStr.toLowerCase().contains('pm') && hour < 12) hour += 12;
+        if (timeStr.toLowerCase().contains('am') && hour == 12) hour = 0;
+        return hour;
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  bool _matchesTime(String? rideTime) {
+    if (_timeFilter == TimeFilter.any) return true;
+    if (rideTime == null || rideTime.isEmpty) return false;
+    final hour = _parseHour(rideTime);
+    if (hour == null) return false;
+    
+    switch (_timeFilter) {
+      case TimeFilter.morning: return hour >= 6 && hour < 12; // 6 AM - 11:59 AM
+      case TimeFilter.afternoon: return hour >= 12 && hour < 17; // 12 PM - 4:59 PM
+      case TimeFilter.evening: return hour >= 17 && hour < 21; // 5 PM - 8:59 PM
+      case TimeFilter.night: return hour >= 21 || hour < 6; // 9 PM - 5:59 AM
+      default: return true;
+    }
+  }
+
+  String _timeFilterLabel(TimeFilter filter) {
+    switch (filter) {
+      case TimeFilter.any: return 'Any time';
+      case TimeFilter.morning: return 'Morning';
+      case TimeFilter.afternoon: return 'Afternoon';
+      case TimeFilter.evening: return 'Evening';
+      case TimeFilter.night: return 'Night';
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -101,6 +142,30 @@ class _FindRideScreenState extends State<FindRideScreen> {
                                 }
                               },
                             ),
+                            const SizedBox(height: 16),
+                            SingleChildScrollView(
+                              scrollDirection: Axis.horizontal,
+                              child: Row(
+                                children: TimeFilter.values.map((filter) {
+                                  final isSelected = _timeFilter == filter;
+                                  return Padding(
+                                    padding: const EdgeInsets.only(right: 8),
+                                    child: ChoiceChip(
+                                      label: Text(_timeFilterLabel(filter)),
+                                      selected: isSelected,
+                                      onSelected: (selected) {
+                                        if (selected) setState(() => _timeFilter = filter);
+                                      },
+                                      selectedColor: AppColors.primary,
+                                      labelStyle: TextStyle(
+                                        color: isSelected ? Colors.white : AppColors.ink,
+                                        fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                                      ),
+                                    ),
+                                  );
+                                }).toList(),
+                              ),
+                            ),
                           ],
                         ),
                       ),
@@ -130,7 +195,8 @@ class _FindRideScreenState extends State<FindRideScreen> {
 
                           final futureRides = rides.where((r) {
                             final rideDay = DateTime(r.rideDate.year, r.rideDate.month, r.rideDate.day);
-                            return !rideDay.isBefore(today);
+                            if (rideDay.isBefore(today)) return false;
+                            return _matchesTime(r.rideTime);
                           }).toList()
                             ..sort((a, b) => a.rideDate.compareTo(b.rideDate));
 

@@ -6,9 +6,12 @@ import 'package:unipool/data/ride_locations.dart';
 import 'package:unipool/theme/app_theme.dart';
 import 'package:unipool/widgets/app_ui.dart';
 import 'package:unipool/models/ride.dart';
+import 'package:unipool/services/notification_service.dart';
 
 class CreateRideScreen extends StatefulWidget {
-  const CreateRideScreen({super.key});
+  final Ride? existingRide;
+
+  const CreateRideScreen({super.key, this.existingRide});
 
   @override
   State<CreateRideScreen> createState() => _CreateRideScreenState();
@@ -19,8 +22,36 @@ class _CreateRideScreenState extends State<CreateRideScreen> {
   String? _selectedDestination;
   DateTime? _selectedDate;
   TimeOfDay? _selectedTime;
+  int _maxParticipants = 4;
   final TextEditingController _fareController = TextEditingController();
   bool _submitting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.existingRide != null) {
+      final ride = widget.existingRide!;
+      _selectedSource = ride.source;
+      _selectedDestination = ride.destination;
+      _selectedDate = ride.rideDate;
+      _maxParticipants = ride.maxParticipants;
+      if (ride.fare != null) {
+        _fareController.text = ride.fare!;
+      }
+      if (ride.rideTime != null && ride.rideTime!.isNotEmpty) {
+        try {
+          final parts = ride.rideTime!.split(RegExp(r'[:\s]'));
+          if (parts.length >= 2) {
+            int hour = int.parse(parts[0]);
+            int minute = int.parse(parts[1]);
+            if (ride.rideTime!.toLowerCase().contains('pm') && hour < 12) hour += 12;
+            if (ride.rideTime!.toLowerCase().contains('am') && hour == 12) hour = 0;
+            _selectedTime = TimeOfDay(hour: hour, minute: minute);
+          }
+        } catch (_) {}
+      }
+    }
+  }
 
   @override
   void dispose() {
@@ -98,6 +129,15 @@ class _CreateRideScreenState extends State<CreateRideScreen> {
       return;
     }
 
+    if (widget.existingRide != null && _maxParticipants < widget.existingRide!.participantCount) {
+      showAppSnackBar(
+        context,
+        'Cannot lower capacity below currently joined passengers (${widget.existingRide!.participantCount}).',
+        isError: true,
+      );
+      return;
+    }
+
     setState(() => _submitting = true);
 
     try {
@@ -113,26 +153,47 @@ class _CreateRideScreenState extends State<CreateRideScreen> {
           : user.email?.split('@').first ?? 'Student';
 
       final newRide = Ride(
-        id: '', // Will be assigned by Firestore
+        id: widget.existingRide?.id ?? '',
         source: _selectedSource!,
         destination: _selectedDestination!,
         rideDate: _selectedDate!,
         leaderId: user.uid,
         leaderName: leaderName,
-        status: 'open',
-        participants: [],
+        status: widget.existingRide?.status ?? 'open',
+        participants: widget.existingRide?.participants ?? [],
+        maxParticipants: _maxParticipants,
         rideTime: _selectedTime!.format(context),
         fare: _fareController.text.trim(),
       );
 
       final rideMap = newRide.toMap();
-      rideMap['createdAt'] = Timestamp.now();
 
-      await FirebaseFirestore.instance.collection('rides').add(rideMap);
+      if (widget.existingRide != null) {
+        await FirebaseFirestore.instance.collection('rides').doc(widget.existingRide!.id).update(rideMap);
+        
+        final existing = widget.existingRide!;
+        final hasChanges = existing.source != _selectedSource! ||
+                           existing.destination != _selectedDestination! ||
+                           existing.rideDate != _selectedDate! ||
+                           existing.rideTime != _selectedTime!.format(context) ||
+                           existing.fare != _fareController.text.trim();
 
-      if (mounted) {
-        Navigator.of(context).pop();
-        showAppSnackBar(context, 'Ride posted successfully.', isError: false);
+        if (hasChanges && existing.participants.isNotEmpty) {
+          await NotificationService.sendRideUpdated(existing.participants, _selectedDestination!);
+        }
+
+        if (mounted) {
+          Navigator.of(context).pop();
+          showAppSnackBar(context, 'Ride updated successfully.', isError: false);
+        }
+      } else {
+        rideMap['createdAt'] = Timestamp.now();
+        await FirebaseFirestore.instance.collection('rides').add(rideMap);
+
+        if (mounted) {
+          Navigator.of(context).pop();
+          showAppSnackBar(context, 'Ride posted successfully.', isError: false);
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -155,8 +216,10 @@ class _CreateRideScreenState extends State<CreateRideScreen> {
           child: Column(
             children: [
               AppPageHeader(
-                title: 'Create ride',
-                subtitle: 'Set the route and date.',
+                title: widget.existingRide != null ? 'Edit ride' : 'Create ride',
+                subtitle: widget.existingRide != null 
+                    ? 'Update your route, timing, or fare.'
+                    : 'Offer a ride and split campus commute costs.',
                 leading: _TopBackButton(
                   onTap: () => Navigator.of(context).pop(),
                 ),
@@ -324,6 +387,31 @@ class _CreateRideScreenState extends State<CreateRideScreen> {
                           onChanged: (val) => setState(() {}),
                         ),
                       ),
+                      const SizedBox(height: 16),
+                      AppSurfaceCard(
+                        child: DropdownButtonFormField<int>(
+                          value: _maxParticipants,
+                          decoration: const InputDecoration(
+                            labelText: 'Maximum passengers',
+                            prefixIcon: Icon(
+                              Icons.group_add_rounded,
+                              color: AppColors.primary,
+                            ),
+                            border: InputBorder.none,
+                          ),
+                          items: [1, 2, 3, 4, 5, 6, 7].map((num) {
+                            return DropdownMenuItem(
+                              value: num,
+                              child: Text('$num passengers'),
+                            );
+                          }).toList(),
+                          onChanged: (val) {
+                            if (val != null) {
+                              setState(() => _maxParticipants = val);
+                            }
+                          },
+                        ),
+                      ),
                       const SizedBox(height: 24),
                       AppSurfaceCard(
                         color: AppColors.surfaceSoft,
@@ -367,6 +455,11 @@ class _CreateRideScreenState extends State<CreateRideScreen> {
                                   : _fareController.text.trim(),
                             ),
                             const SizedBox(height: 12),
+                            _PreviewRow(
+                              label: 'Capacity',
+                              value: 'Up to $_maxParticipants passengers',
+                            ),
+                            const SizedBox(height: 12),
                             const _PreviewRow(
                               label: 'Status',
                               value: 'Open for poolers to discover',
@@ -378,8 +471,8 @@ class _CreateRideScreenState extends State<CreateRideScreen> {
                       SizedBox(
                         width: double.infinity,
                         child: AppPrimaryButton(
-                          label: 'Post ride request',
-                          icon: Icons.arrow_upward_rounded,
+                          label: widget.existingRide != null ? 'Update ride details' : 'Post ride request',
+                          icon: widget.existingRide != null ? Icons.save_rounded : Icons.arrow_upward_rounded,
                           isLoading: _submitting,
                           onPressed: _submitRide,
                         ),

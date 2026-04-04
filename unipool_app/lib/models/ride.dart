@@ -11,6 +11,7 @@ class Ride {
   final String leaderName;
   final String status;
   final List<String> participants;
+  final int maxParticipants;
 
   Ride({
     required this.id,
@@ -21,6 +22,7 @@ class Ride {
     required this.leaderName,
     required this.status,
     required this.participants,
+    required this.maxParticipants,
     this.rideTime,
     this.fare,
   });
@@ -49,6 +51,7 @@ class Ride {
       participants: data.containsKey('participants') 
           ? List<String>.from(data['participants']) 
           : [],
+      maxParticipants: data['maxParticipants'] ?? 4,
       rideTime: data['rideTime'],
       fare: data['fare'],
     );
@@ -70,6 +73,7 @@ class Ride {
       'leaderName': leaderName,
       'status': status,
       'participants': participants,
+      'maxParticipants': maxParticipants,
       if (rideTime != null && rideTime!.isNotEmpty) 'rideTime': rideTime,
       if (fare != null && fare!.isNotEmpty) 'fare': fare,
     };

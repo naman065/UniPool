@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:unipool/theme/app_theme.dart';
 import 'package:unipool/widgets/app_ui.dart';
+import 'package:unipool/services/notification_service.dart';
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({
@@ -47,12 +48,25 @@ class _ChatScreenState extends State<ChatScreen> {
           'senderEmail': user.email,
         });
 
-    await FirebaseFirestore.instance
-        .collection('rides')
-        .doc(widget.rideId)
-        .update({
-          'participants': FieldValue.arrayUnion([user.uid]),
-        });
+    final rideDoc = await FirebaseFirestore.instance.collection('rides').doc(widget.rideId).get();
+    if (rideDoc.exists && rideDoc.data()?['leaderId'] != user.uid) {
+      final data = rideDoc.data()!;
+      final participants = data.containsKey('participants') ? List.from(data['participants']) : [];
+      final maxParticipants = data['maxParticipants'] ?? 4;
+      final leaderId = data['leaderId'];
+      
+      if (!participants.contains(user.uid) && participants.length < maxParticipants) {
+        await FirebaseFirestore.instance
+            .collection('rides')
+            .doc(widget.rideId)
+            .update({
+              'participants': FieldValue.arrayUnion([user.uid]),
+            });
+            
+        final passengerName = user.email?.split('@').first ?? 'A student';
+        await NotificationService.sendPassengerJoined(leaderId, passengerName, widget.rideDestination);
+      }
+    }
 
     _messageController.clear();
   }
