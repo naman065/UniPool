@@ -1,10 +1,12 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import 'package:unipool/data/ride_locations.dart';
 import 'package:unipool/screens/chat_screen.dart';
 import 'package:unipool/theme/app_theme.dart';
 import 'package:unipool/widgets/app_ui.dart';
+import 'package:unipool/models/ride.dart';
+import 'package:unipool/widgets/ride_card.dart';
 
 class FindRideScreen extends StatefulWidget {
   const FindRideScreen({super.key});
@@ -13,8 +15,49 @@ class FindRideScreen extends StatefulWidget {
   State<FindRideScreen> createState() => _FindRideScreenState();
 }
 
+enum TimeFilter { any, morning, afternoon, evening, night }
+
 class _FindRideScreenState extends State<FindRideScreen> {
   String _filterDestination = allLocationsLabel;
+  TimeFilter _timeFilter = TimeFilter.any;
+
+  int? _parseHour(String timeStr) {
+    try {
+      final parts = timeStr.split(RegExp(r'[:\s]'));
+      if (parts.length >= 2) {
+        int hour = int.parse(parts[0]);
+        if (timeStr.toLowerCase().contains('pm') && hour < 12) hour += 12;
+        if (timeStr.toLowerCase().contains('am') && hour == 12) hour = 0;
+        return hour;
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  bool _matchesTime(String? rideTime) {
+    if (_timeFilter == TimeFilter.any) return true;
+    if (rideTime == null || rideTime.isEmpty) return false;
+    final hour = _parseHour(rideTime);
+    if (hour == null) return false;
+    
+    switch (_timeFilter) {
+      case TimeFilter.morning: return hour >= 6 && hour < 12; // 6 AM - 11:59 AM
+      case TimeFilter.afternoon: return hour >= 12 && hour < 17; // 12 PM - 4:59 PM
+      case TimeFilter.evening: return hour >= 17 && hour < 21; // 5 PM - 8:59 PM
+      case TimeFilter.night: return hour >= 21 || hour < 6; // 9 PM - 5:59 AM
+      default: return true;
+    }
+  }
+
+  String _timeFilterLabel(TimeFilter filter) {
+    switch (filter) {
+      case TimeFilter.any: return 'Any time';
+      case TimeFilter.morning: return 'Morning';
+      case TimeFilter.afternoon: return 'Afternoon';
+      case TimeFilter.evening: return 'Evening';
+      case TimeFilter.night: return 'Night';
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -73,6 +116,7 @@ class _FindRideScreenState extends State<FindRideScreen> {
                             ),
                             const SizedBox(height: 14),
                             DropdownButtonFormField<String>(
+                              isExpanded: true,
                               initialValue: _filterDestination,
                               decoration: const InputDecoration(
                                 labelText: 'Destination',
@@ -98,6 +142,30 @@ class _FindRideScreenState extends State<FindRideScreen> {
                                 }
                               },
                             ),
+                            const SizedBox(height: 16),
+                            SingleChildScrollView(
+                              scrollDirection: Axis.horizontal,
+                              child: Row(
+                                children: TimeFilter.values.map((filter) {
+                                  final isSelected = _timeFilter == filter;
+                                  return Padding(
+                                    padding: const EdgeInsets.only(right: 8),
+                                    child: ChoiceChip(
+                                      label: Text(_timeFilterLabel(filter)),
+                                      selected: isSelected,
+                                      onSelected: (selected) {
+                                        if (selected) setState(() => _timeFilter = filter);
+                                      },
+                                      selectedColor: AppColors.primary,
+                                      labelStyle: TextStyle(
+                                        color: isSelected ? Colors.white : AppColors.ink,
+                                        fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                                      ),
+                                    ),
+                                  );
+                                }).toList(),
+                              ),
+                            ),
                           ],
                         ),
                       ),
@@ -115,8 +183,24 @@ class _FindRideScreenState extends State<FindRideScreen> {
                             );
                           }
 
-                          if (!snapshot.hasData ||
-                              snapshot.data!.docs.isEmpty) {
+                          if (!snapshot.hasData) {
+                            return const SizedBox.shrink();
+                          }
+
+                          final docs = snapshot.data!.docs;
+                          final rides = docs.map((doc) => Ride.fromFirestore(doc)).toList();
+
+                          final now = DateTime.now();
+                          final today = DateTime(now.year, now.month, now.day);
+
+                          final futureRides = rides.where((r) {
+                            final rideDay = DateTime(r.rideDate.year, r.rideDate.month, r.rideDate.day);
+                            if (rideDay.isBefore(today)) return false;
+                            return _matchesTime(r.rideTime);
+                          }).toList()
+                            ..sort((a, b) => a.rideDate.compareTo(b.rideDate));
+
+                          if (futureRides.isEmpty) {
                             return AppEmptyState(
                               icon: Icons.search_off_rounded,
                               title: 'No rides found',
@@ -126,21 +210,16 @@ class _FindRideScreenState extends State<FindRideScreen> {
                             );
                           }
 
-                          final rideDocs = snapshot.data!.docs.toList()
-                            ..sort(
-                              (a, b) => _rideDate(b).compareTo(_rideDate(a)),
-                            );
-
                           return ListView.builder(
                             padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
-                            itemCount: rideDocs.length,
+                            itemCount: futureRides.length,
                             itemBuilder: (context, index) {
-                              final ride = rideDocs[index];
+                              final ride = futureRides[index];
                               return Padding(
                                 padding: const EdgeInsets.only(bottom: 14),
-                                child: _RideCard(
+                                child: StandardRideCard(
                                   ride: ride,
-                                  onTap: () => _showRideDetails(context, ride),
+                                  onTap: () => showRideDetailsSheet(context, ride),
                                 ),
                               );
                             },
@@ -156,173 +235,6 @@ class _FindRideScreenState extends State<FindRideScreen> {
         ),
       ),
     );
-  }
-
-  Future<void> _showRideDetails(
-    BuildContext context,
-    DocumentSnapshot ride,
-  ) async {
-    final leaderData = await FirebaseFirestore.instance
-        .collection('users')
-        .doc(ride['leaderId'])
-        .get();
-    final leaderMap = leaderData.data();
-    final ridesCount = leaderMap?['ridesCompleted'] ?? 0;
-
-    if (!context.mounted) {
-      return;
-    }
-
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (ctx) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-            child: AppSurfaceCard(
-              radius: 30,
-              padding: const EdgeInsets.all(22),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      const AppIconBadge(
-                        icon: Icons.directions_car_filled_rounded,
-                        color: AppColors.primary,
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Text(
-                          'Ride details',
-                          style: Theme.of(context).textTheme.titleLarge,
-                        ),
-                      ),
-                      IconButton(
-                        onPressed: () => Navigator.pop(ctx),
-                        icon: const Icon(Icons.close_rounded),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 18),
-                  _DetailRow(
-                    label: 'From',
-                    value: ride['source'],
-                    color: AppColors.primary,
-                    icon: Icons.my_location_rounded,
-                  ),
-                  const SizedBox(height: 12),
-                  _DetailRow(
-                    label: 'To',
-                    value: ride['destination'],
-                    color: AppColors.accent,
-                    icon: Icons.place_rounded,
-                  ),
-                  const SizedBox(height: 12),
-                  _DetailRow(
-                    label: 'Date',
-                    value: DateFormat(
-                      'EEEE, d MMM yyyy',
-                    ).format(_rideDate(ride)),
-                    color: AppColors.secondary,
-                    icon: Icons.calendar_month_rounded,
-                  ),
-                  const SizedBox(height: 18),
-                  AppSurfaceCard(
-                    color: AppColors.surfaceSoft,
-                    radius: 24,
-                    child: Row(
-                      children: [
-                        CircleAvatar(
-                          radius: 26,
-                          backgroundColor: AppColors.primary,
-                          child: Text(
-                            ride['leaderName'].toString().isNotEmpty
-                                ? ride['leaderName'].toString()[0].toUpperCase()
-                                : '?',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 14),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                ride['leaderName'],
-                                style: const TextStyle(
-                                  color: AppColors.ink,
-                                  fontWeight: FontWeight.w800,
-                                  fontSize: 16,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                '$ridesCount rides completed',
-                                style: const TextStyle(
-                                  color: AppColors.muted,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        const AppPill(
-                          label: 'Open',
-                          foregroundColor: AppColors.success,
-                          backgroundColor: Color(0xFFE7F7EC),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 22),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton(
-                          onPressed: () => Navigator.pop(ctx),
-                          child: const Text('Close'),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        flex: 2,
-                        child: AppPrimaryButton(
-                          label: 'Join and chat',
-                          icon: Icons.chat_rounded,
-                          onPressed: () {
-                            Navigator.pop(ctx);
-                            Navigator.of(context).push(
-                              MaterialPageRoute(
-                                builder: (_) => ChatScreen(
-                                  rideId: ride.id,
-                                  rideDestination: ride['destination'],
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  DateTime _rideDate(DocumentSnapshot ride) {
-    final rawDate = ride['rideDate'];
-    return DateTime.tryParse(rawDate.toString()) ?? DateTime.now();
   }
 }
 
@@ -349,136 +261,6 @@ class _TopBackButton extends StatelessWidget {
           ),
         ),
       ),
-    );
-  }
-}
-
-class _RideCard extends StatelessWidget {
-  const _RideCard({required this.ride, required this.onTap});
-
-  final DocumentSnapshot ride;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final date =
-        DateTime.tryParse(ride['rideDate'].toString()) ?? DateTime.now();
-
-    return AppSurfaceCard(
-      padding: EdgeInsets.zero,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(26),
-        child: Padding(
-          padding: const EdgeInsets.all(18),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  const AppIconBadge(
-                    icon: Icons.local_taxi_rounded,
-                    color: AppColors.primary,
-                  ),
-                  const Spacer(),
-                  const AppPill(
-                    label: 'Open',
-                    foregroundColor: AppColors.success,
-                    backgroundColor: Color(0xFFE7F7EC),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              Text(
-                '${ride['source']} to ${ride['destination']}',
-                style: const TextStyle(
-                  color: AppColors.ink,
-                  fontSize: 18,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-              const SizedBox(height: 10),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  AppPill(
-                    label: ride['leaderName'],
-                    icon: Icons.person_outline_rounded,
-                  ),
-                  AppPill(
-                    label: DateFormat('d MMM').format(date),
-                    icon: Icons.calendar_today_rounded,
-                  ),
-                ],
-              ),
-              const SizedBox(height: 14),
-              const Row(
-                children: [
-                  Text(
-                    'Tap to review the ride and open chat',
-                    style: TextStyle(
-                      color: AppColors.muted,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  SizedBox(width: 8),
-                  Icon(
-                    Icons.arrow_forward_rounded,
-                    color: AppColors.muted,
-                    size: 18,
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _DetailRow extends StatelessWidget {
-  const _DetailRow({
-    required this.label,
-    required this.value,
-    required this.color,
-    required this.icon,
-  });
-
-  final String label;
-  final String value;
-  final Color color;
-  final IconData icon;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        AppIconBadge(icon: icon, color: color),
-        const SizedBox(width: 12),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              label,
-              style: const TextStyle(
-                color: AppColors.muted,
-                fontWeight: FontWeight.w700,
-                fontSize: 12,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              value,
-              style: const TextStyle(
-                color: AppColors.ink,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-          ],
-        ),
-      ],
     );
   }
 }

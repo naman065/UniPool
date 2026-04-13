@@ -1,8 +1,10 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:unipool/screens/create_ride_screen.dart';
 import 'package:unipool/screens/find_ride_screen.dart';
 import 'package:unipool/screens/my_rides_screen.dart';
+import 'package:unipool/screens/notifications_screen.dart';
 import 'package:unipool/screens/profile_screen.dart';
 import 'package:unipool/theme/app_theme.dart';
 import 'package:unipool/widgets/app_ui.dart';
@@ -27,6 +29,8 @@ class HomeScreen extends StatelessWidget {
                 subtitle: 'Post a ride or find one already going your way.',
                 badge: _brandBadge(),
                 actions: [
+                  const _NotificationBell(),
+                  const SizedBox(width: 8),
                   _HeaderIconButton(
                     icon: Icons.logout_rounded,
                     onTap: () => FirebaseAuth.instance.signOut(),
@@ -476,6 +480,56 @@ class _BenefitTile extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _NotificationBell extends StatelessWidget {
+  const _NotificationBell();
+
+  @override
+  Widget build(BuildContext context) {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return const SizedBox.shrink();
+
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .collection('notifications')
+          .where('isRead', isEqualTo: false)
+          .snapshots(),
+      builder: (context, snapshot) {
+        final unreadCount = snapshot.data?.docs.length ?? 0;
+
+        return Stack(
+          clipBehavior: Clip.none,
+          children: [
+            _HeaderIconButton(
+              icon: Icons.notifications_none_rounded,
+              onTap: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const NotificationsScreen()),
+                );
+              },
+            ),
+            if (unreadCount > 0)
+              Positioned(
+                top: -2,
+                right: -2,
+                child: Container(
+                  width: 14,
+                  height: 14,
+                  decoration: BoxDecoration(
+                    color: AppColors.danger,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: AppColors.surface, width: 2),
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
     );
   }
 }
