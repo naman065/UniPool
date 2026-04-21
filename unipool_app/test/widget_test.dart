@@ -3,6 +3,6 @@ import 'package:unipool/main.dart';
 
 void main() {
   test('app widget can be constructed', () {
-    expect(const UnipoolApp(), isNotNull);
+    expect(UnipoolApp(), isNotNull);
   });
 }

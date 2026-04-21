@@ -1,14 +1,14 @@
-import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:intl/intl.dart';
-import 'package:unipool/screens/chat_screen.dart';
+import 'package:flutter/material.dart';
+import 'package:unipool/models/ride.dart';
+import 'package:unipool/providers/ride_repository_scope.dart';
 import 'package:unipool/screens/create_ride_screen.dart';
+import 'package:unipool/screens/rating_screen.dart';
+import 'package:unipool/screens/ride_requests_screen.dart';
+import 'package:unipool/services/notification_service.dart';
 import 'package:unipool/theme/app_theme.dart';
 import 'package:unipool/widgets/app_ui.dart';
-import 'package:unipool/models/ride.dart';
 import 'package:unipool/widgets/ride_card.dart';
-import 'package:unipool/services/notification_service.dart';
 
 class MyRidesScreen extends StatelessWidget {
   const MyRidesScreen({super.key});
@@ -26,7 +26,7 @@ class MyRidesScreen extends StatelessWidget {
               children: [
                 AppPageHeader(
                   title: 'My rides',
-                  subtitle: 'Rides you lead and rides you joined.',
+                  subtitle: 'Rides you lead, join, approve, and rate.',
                   leading: _TopBackButton(
                     onTap: () => Navigator.of(context).pop(),
                   ),
@@ -108,17 +108,13 @@ class RideList extends StatelessWidget {
 
   Future<void> _completeRide(
     BuildContext context,
-    String rideId,
+    Ride ride,
     String leaderId,
   ) async {
     try {
-      await FirebaseFirestore.instance.collection('rides').doc(rideId).update({
-        'status': 'completed',
-      });
-
-      await FirebaseFirestore.instance.collection('users').doc(leaderId).update(
-        {'ridesCompleted': FieldValue.increment(1)},
-      );
+      await RideRepositoryScope.of(
+        context,
+      ).markRideCompleted(rideId: ride.id, leaderUid: leaderId);
 
       if (context.mounted) {
         showAppSnackBar(context, 'Ride marked as completed.', isError: false);
@@ -131,6 +127,7 @@ class RideList extends StatelessWidget {
   }
 
   Future<void> _deleteRide(BuildContext context, Ride ride) async {
+    final rideRepository = RideRepositoryScope.of(context);
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) {
@@ -161,10 +158,13 @@ class RideList extends StatelessWidget {
     }
 
     try {
-      if (ride.participants.isNotEmpty) {
-        await NotificationService.sendRideCanceled(ride.participants, ride.destination);
+      if (ride.acceptedMembers.isNotEmpty) {
+        await NotificationService.sendRideCanceled(
+          ride.acceptedMembers,
+          ride.destination,
+        );
       }
-      await FirebaseFirestore.instance.collection('rides').doc(ride.id).delete();
+      await rideRepository.deleteRide(ride.id);
       if (context.mounted) {
         showAppSnackBar(context, 'Ride deleted successfully.', isError: false);
       }
@@ -175,7 +175,12 @@ class RideList extends StatelessWidget {
     }
   }
 
-  Future<void> _leaveRide(BuildContext context, String rideId, String userId) async {
+  Future<void> _leaveRide(
+    BuildContext context,
+    Ride ride,
+    String userId,
+  ) async {
+    final rideRepository = RideRepositoryScope.of(context);
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) {
@@ -206,9 +211,7 @@ class RideList extends StatelessWidget {
     }
 
     try {
-      await FirebaseFirestore.instance.collection('rides').doc(rideId).update({
-        'participants': FieldValue.arrayRemove([userId])
-      });
+      await rideRepository.leaveRide(rideId: ride.id, userId: userId);
       if (context.mounted) {
         showAppSnackBar(context, 'You have left the ride.', isError: false);
       }
@@ -222,17 +225,13 @@ class RideList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final user = FirebaseAuth.instance.currentUser!;
+    final rideRepository = RideRepositoryScope.of(context);
+    final stream = isLeader
+        ? rideRepository.watchLeaderRides(user.uid)
+        : rideRepository.watchJoinedRides(user.uid);
 
-    final query = isLeader
-        ? FirebaseFirestore.instance
-              .collection('rides')
-              .where('leaderId', isEqualTo: user.uid)
-        : FirebaseFirestore.instance
-              .collection('rides')
-              .where('participants', arrayContains: user.uid);
-
-    return StreamBuilder<QuerySnapshot>(
-      stream: query.snapshots(),
+    return StreamBuilder<List<Ride>>(
+      stream: stream,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Center(
@@ -240,29 +239,33 @@ class RideList extends StatelessWidget {
           );
         }
 
-        final docs = snapshot.data?.docs ?? [];
-        var rides = docs.map((doc) => Ride.fromFirestore(doc)).toList();
-
+        final rides = List<Ride>.from(snapshot.data ?? const <Ride>[]);
         final now = DateTime.now();
         final today = DateTime(now.year, now.month, now.day);
 
         rides.removeWhere((ride) {
-          // Drop all past rides universally
           final rideDay = DateTime(
-              ride.rideDate.year, ride.rideDate.month, ride.rideDate.day);
-          if (rideDay.isBefore(today)) {
+            ride.rideDate.year,
+            ride.rideDate.month,
+            ride.rideDate.day,
+          );
+          final isPastUnfinished = rideDay.isBefore(today) && !ride.isCompleted;
+
+          if (isPastUnfinished) {
             return true;
           }
-
-          // If we are looking at 'I Joined', also drop rides we lead to prevent overlap
           if (!isLeader && ride.leaderId == user.uid) {
             return true;
           }
-
           return false;
         });
 
-        rides.sort((a, b) => b.rideDate.compareTo(a.rideDate));
+        rides.sort((a, b) {
+          if (a.isCompleted != b.isCompleted) {
+            return a.isCompleted ? 1 : -1;
+          }
+          return b.rideDate.compareTo(a.rideDate);
+        });
 
         if (rides.isEmpty) {
           return Padding(
@@ -292,22 +295,41 @@ class RideList extends StatelessWidget {
                   ride: ride,
                   isLeaderView: true,
                   onTap: () => showRideDetailsSheet(context, ride),
-                  onComplete: (id) => _completeRide(context, id, user.uid),
-                  onDelete: (id) => _deleteRide(context, ride),
-                  onEdit: (id) => Navigator.of(context).push(MaterialPageRoute(builder: (_) => CreateRideScreen(existingRide: ride))),
-                ),
-              );
-            } else {
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 14),
-                child: _JoinedRideCard(
-                  ride: ride,
-                  isLeaderView: false,
-                  onTap: () => showRideDetailsSheet(context, ride),
-                  onLeave: (id) => _leaveRide(context, id, user.uid),
+                  onComplete: () => _completeRide(context, ride, user.uid),
+                  onDelete: () => _deleteRide(context, ride),
+                  onEdit: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => CreateRideScreen(existingRide: ride),
+                    ),
+                  ),
+                  onManageRequests: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => RideRequestsScreen(rideId: ride.id),
+                    ),
+                  ),
+                  onRate: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => RatingScreen(rideId: ride.id),
+                    ),
+                  ),
                 ),
               );
             }
+
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 14),
+              child: _JoinedRideCard(
+                ride: ride,
+                isLeaderView: false,
+                onTap: () => showRideDetailsSheet(context, ride),
+                onLeave: () => _leaveRide(context, ride, user.uid),
+                onRate: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => RatingScreen(rideId: ride.id),
+                  ),
+                ),
+              ),
+            );
           },
         );
       },
@@ -316,10 +338,6 @@ class RideList extends StatelessWidget {
 }
 
 class _LeaderRideCard extends MyRideCard {
-  final Function(String) onComplete;
-  final Function(String) onDelete;
-  final Function(String) onEdit;
-
   const _LeaderRideCard({
     required super.ride,
     required super.isLeaderView,
@@ -327,7 +345,15 @@ class _LeaderRideCard extends MyRideCard {
     required this.onComplete,
     required this.onDelete,
     required this.onEdit,
+    required this.onManageRequests,
+    required this.onRate,
   });
+
+  final VoidCallback onComplete;
+  final VoidCallback onDelete;
+  final VoidCallback onEdit;
+  final VoidCallback onManageRequests;
+  final VoidCallback onRate;
 
   @override
   Widget? buildBottomAction(BuildContext context) {
@@ -336,50 +362,70 @@ class _LeaderRideCard extends MyRideCard {
       runSpacing: 10,
       children: [
         super.buildBottomAction(context) ?? const SizedBox.shrink(),
-        if (isLeaderView && ride.isOpen)
+        if (!ride.isCompleted)
           FilledButton.icon(
-            onPressed: () => onComplete(ride.id),
+            onPressed: onManageRequests,
+            icon: const Icon(Icons.how_to_reg_rounded),
+            label: Text(
+              ride.pendingRequests.isEmpty
+                  ? 'Manage requests'
+                  : 'Requests (${ride.pendingRequests.length})',
+            ),
+          ),
+        if (!ride.isCompleted)
+          FilledButton.icon(
+            onPressed: onComplete,
             icon: const Icon(Icons.check_circle_outline_rounded),
             label: const Text('Mark complete'),
           ),
-        if (isLeaderView) ...[
+        if (ride.isCompleted)
           OutlinedButton.icon(
-            onPressed: () => onEdit(ride.id),
+            onPressed: onRate,
             icon: const Icon(
-              Icons.edit_rounded,
+              Icons.star_outline_rounded,
               color: AppColors.primary,
             ),
+            label: const Text(
+              'Rate riders',
+              style: TextStyle(color: AppColors.primary),
+            ),
+          ),
+        if (!ride.isCompleted)
+          OutlinedButton.icon(
+            onPressed: onEdit,
+            icon: const Icon(Icons.edit_rounded, color: AppColors.primary),
             label: const Text(
               'Edit',
               style: TextStyle(color: AppColors.primary),
             ),
           ),
-          OutlinedButton.icon(
-            onPressed: () => onDelete(ride.id),
-            icon: const Icon(
-              Icons.delete_outline_rounded,
-              color: AppColors.danger,
-            ),
-            label: const Text(
-              'Delete',
-              style: TextStyle(color: AppColors.danger),
-            ),
+        OutlinedButton.icon(
+          onPressed: onDelete,
+          icon: const Icon(
+            Icons.delete_outline_rounded,
+            color: AppColors.danger,
           ),
-        ]
+          label: const Text(
+            'Delete',
+            style: TextStyle(color: AppColors.danger),
+          ),
+        ),
       ],
     );
   }
 }
 
 class _JoinedRideCard extends MyRideCard {
-  final Function(String) onLeave;
-
   const _JoinedRideCard({
     required super.ride,
     required super.isLeaderView,
     super.onTap,
     required this.onLeave,
+    required this.onRate,
   });
+
+  final VoidCallback onLeave;
+  final VoidCallback onRate;
 
   @override
   Widget? buildBottomAction(BuildContext context) {
@@ -388,9 +434,15 @@ class _JoinedRideCard extends MyRideCard {
       runSpacing: 10,
       children: [
         super.buildBottomAction(context) ?? const SizedBox.shrink(),
-        if (ride.isOpen)
+        if (ride.isCompleted)
+          FilledButton.icon(
+            onPressed: onRate,
+            icon: const Icon(Icons.star_rate_rounded),
+            label: const Text('Rate peers'),
+          ),
+        if (!ride.isCompleted)
           OutlinedButton.icon(
-            onPressed: () => onLeave(ride.id),
+            onPressed: onLeave,
             icon: const Icon(
               Icons.exit_to_app_rounded,
               color: AppColors.danger,

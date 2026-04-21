@@ -1,21 +1,30 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 class AppNotification {
+  static const String joinRequestType = 'join_request';
+  static const String genericType = 'generic';
+
   final String id;
   final String title;
   final String body;
+  final String type;
   final bool isRead;
   final DateTime createdAt;
-  final String? relatedRideId;
+  final String? rideId;
+  final String? senderUid;
 
   AppNotification({
     required this.id,
     required this.title,
     required this.body,
+    required this.type,
     required this.isRead,
     required this.createdAt,
-    this.relatedRideId,
+    this.rideId,
+    this.senderUid,
   });
+
+  bool get isJoinRequest => type == joinRequestType;
 
   factory AppNotification.fromFirestore(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>? ?? {};
@@ -37,9 +46,11 @@ class AppNotification {
       id: doc.id,
       title: data['title'] ?? 'Notification',
       body: data['body'] ?? '',
+      type: data['type'] ?? genericType,
       isRead: data['isRead'] ?? false,
       createdAt: parsedDate,
-      relatedRideId: data['relatedRideId'],
+      rideId: (data['rideId'] as String?) ?? (data['relatedRideId'] as String?),
+      senderUid: data['senderUid'] as String?,
     );
   }
 
@@ -47,9 +58,12 @@ class AppNotification {
     return {
       'title': title,
       'body': body,
+      'type': type,
       'isRead': isRead,
       'createdAt': Timestamp.fromDate(createdAt),
-      if (relatedRideId != null) 'relatedRideId': relatedRideId,
+      if (rideId != null) 'rideId': rideId,
+      if (rideId != null) 'relatedRideId': rideId,
+      if (senderUid != null) 'senderUid': senderUid,
     };
   }
 }

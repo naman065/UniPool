@@ -509,7 +509,9 @@ class _NotificationBell extends StatelessWidget {
               icon: Icons.notifications_none_rounded,
               onTap: () {
                 Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const NotificationsScreen()),
+                  MaterialPageRoute(
+                    builder: (_) => const NotificationsScreen(),
+                  ),
                 );
               },
             ),

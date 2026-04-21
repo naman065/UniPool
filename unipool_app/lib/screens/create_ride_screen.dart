@@ -3,10 +3,11 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:unipool/data/ride_locations.dart';
+import 'package:unipool/models/ride.dart';
+import 'package:unipool/providers/ride_repository_scope.dart';
+import 'package:unipool/services/notification_service.dart';
 import 'package:unipool/theme/app_theme.dart';
 import 'package:unipool/widgets/app_ui.dart';
-import 'package:unipool/models/ride.dart';
-import 'package:unipool/services/notification_service.dart';
 
 class CreateRideScreen extends StatefulWidget {
   final Ride? existingRide;
@@ -44,8 +45,12 @@ class _CreateRideScreenState extends State<CreateRideScreen> {
           if (parts.length >= 2) {
             int hour = int.parse(parts[0]);
             int minute = int.parse(parts[1]);
-            if (ride.rideTime!.toLowerCase().contains('pm') && hour < 12) hour += 12;
-            if (ride.rideTime!.toLowerCase().contains('am') && hour == 12) hour = 0;
+            if (ride.rideTime!.toLowerCase().contains('pm') && hour < 12) {
+              hour += 12;
+            }
+            if (ride.rideTime!.toLowerCase().contains('am') && hour == 12) {
+              hour = 0;
+            }
             _selectedTime = TimeOfDay(hour: hour, minute: minute);
           }
         } catch (_) {}
@@ -129,7 +134,8 @@ class _CreateRideScreenState extends State<CreateRideScreen> {
       return;
     }
 
-    if (widget.existingRide != null && _maxParticipants < widget.existingRide!.participantCount) {
+    if (widget.existingRide != null &&
+        _maxParticipants < widget.existingRide!.participantCount) {
       showAppSnackBar(
         context,
         'Cannot lower capacity below currently joined passengers (${widget.existingRide!.participantCount}).',
@@ -141,6 +147,8 @@ class _CreateRideScreenState extends State<CreateRideScreen> {
     setState(() => _submitting = true);
 
     try {
+      final formattedTime = _selectedTime!.format(context);
+      final rideRepository = RideRepositoryScope.of(context);
       final user = FirebaseAuth.instance.currentUser!;
       final userData = await FirebaseFirestore.instance
           .collection('users')
@@ -159,36 +167,47 @@ class _CreateRideScreenState extends State<CreateRideScreen> {
         rideDate: _selectedDate!,
         leaderId: user.uid,
         leaderName: leaderName,
-        status: widget.existingRide?.status ?? 'open',
-        participants: widget.existingRide?.participants ?? [],
-        maxParticipants: _maxParticipants,
-        rideTime: _selectedTime!.format(context),
+        status: widget.existingRide?.status ?? RideStatus.searching,
+        pendingRequests:
+            widget.existingRide?.pendingRequests ?? const <String>[],
+        acceptedMembers:
+            widget.existingRide?.acceptedMembers ?? const <String>[],
+        rejectedMembers:
+            widget.existingRide?.rejectedMembers ?? const <String>[],
+        maxSeats: _maxParticipants,
+        rideTime: formattedTime,
         fare: _fareController.text.trim(),
+        createdAt: widget.existingRide?.createdAt,
       );
 
-      final rideMap = newRide.toMap();
-
       if (widget.existingRide != null) {
-        await FirebaseFirestore.instance.collection('rides').doc(widget.existingRide!.id).update(rideMap);
-        
+        await rideRepository.updateRide(newRide);
+
         final existing = widget.existingRide!;
-        final hasChanges = existing.source != _selectedSource! ||
-                           existing.destination != _selectedDestination! ||
-                           existing.rideDate != _selectedDate! ||
-                           existing.rideTime != _selectedTime!.format(context) ||
-                           existing.fare != _fareController.text.trim();
+        final hasChanges =
+            existing.source != _selectedSource! ||
+            existing.destination != _selectedDestination! ||
+            existing.rideDate != _selectedDate! ||
+            existing.rideTime != formattedTime ||
+            existing.fare != _fareController.text.trim();
 
         if (hasChanges && existing.participants.isNotEmpty) {
-          await NotificationService.sendRideUpdated(existing.participants, _selectedDestination!);
+          await NotificationService.sendRideUpdated(
+            existing.participants,
+            _selectedDestination!,
+          );
         }
 
         if (mounted) {
           Navigator.of(context).pop();
-          showAppSnackBar(context, 'Ride updated successfully.', isError: false);
+          showAppSnackBar(
+            context,
+            'Ride updated successfully.',
+            isError: false,
+          );
         }
       } else {
-        rideMap['createdAt'] = Timestamp.now();
-        await FirebaseFirestore.instance.collection('rides').add(rideMap);
+        await rideRepository.createRide(newRide);
 
         if (mounted) {
           Navigator.of(context).pop();
@@ -216,8 +235,10 @@ class _CreateRideScreenState extends State<CreateRideScreen> {
           child: Column(
             children: [
               AppPageHeader(
-                title: widget.existingRide != null ? 'Edit ride' : 'Create ride',
-                subtitle: widget.existingRide != null 
+                title: widget.existingRide != null
+                    ? 'Edit ride'
+                    : 'Create ride',
+                subtitle: widget.existingRide != null
                     ? 'Update your route, timing, or fare.'
                     : 'Offer a ride and split campus commute costs.',
                 leading: _TopBackButton(
@@ -377,7 +398,8 @@ class _CreateRideScreenState extends State<CreateRideScreen> {
                           maxLength: 40,
                           decoration: const InputDecoration(
                             counterText: '',
-                            labelText: 'Fare estimate (e.g., ₹ 150 or by meter)',
+                            labelText:
+                                'Fare estimate (e.g., ₹ 150 or by meter)',
                             prefixIcon: Icon(
                               Icons.payments_rounded,
                               color: AppColors.primary,
@@ -390,7 +412,7 @@ class _CreateRideScreenState extends State<CreateRideScreen> {
                       const SizedBox(height: 16),
                       AppSurfaceCard(
                         child: DropdownButtonFormField<int>(
-                          value: _maxParticipants,
+                          initialValue: _maxParticipants,
                           decoration: const InputDecoration(
                             labelText: 'Maximum passengers',
                             prefixIcon: Icon(
@@ -399,10 +421,10 @@ class _CreateRideScreenState extends State<CreateRideScreen> {
                             ),
                             border: InputBorder.none,
                           ),
-                          items: [1, 2, 3, 4, 5, 6, 7].map((num) {
+                          items: [1, 2, 3, 4, 5, 6, 7].map((seatCount) {
                             return DropdownMenuItem(
-                              value: num,
-                              child: Text('$num passengers'),
+                              value: seatCount,
+                              child: Text('$seatCount passengers'),
                             );
                           }).toList(),
                           onChanged: (val) {
@@ -462,7 +484,7 @@ class _CreateRideScreenState extends State<CreateRideScreen> {
                             const SizedBox(height: 12),
                             const _PreviewRow(
                               label: 'Status',
-                              value: 'Open for poolers to discover',
+                              value: 'Searching for approved riders',
                             ),
                           ],
                         ),
@@ -471,8 +493,12 @@ class _CreateRideScreenState extends State<CreateRideScreen> {
                       SizedBox(
                         width: double.infinity,
                         child: AppPrimaryButton(
-                          label: widget.existingRide != null ? 'Update ride details' : 'Post ride request',
-                          icon: widget.existingRide != null ? Icons.save_rounded : Icons.arrow_upward_rounded,
+                          label: widget.existingRide != null
+                              ? 'Update ride details'
+                              : 'Post ride request',
+                          icon: widget.existingRide != null
+                              ? Icons.save_rounded
+                              : Icons.arrow_upward_rounded,
                           isLoading: _submitting,
                           onPressed: _submitRide,
                         ),

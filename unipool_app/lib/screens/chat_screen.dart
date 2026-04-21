@@ -2,9 +2,10 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:unipool/models/ride.dart';
+import 'package:unipool/providers/ride_repository_scope.dart';
 import 'package:unipool/theme/app_theme.dart';
 import 'package:unipool/widgets/app_ui.dart';
-import 'package:unipool/services/notification_service.dart';
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({
@@ -36,6 +37,25 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     final user = FirebaseAuth.instance.currentUser!;
+    final rideDoc = await FirebaseFirestore.instance
+        .collection('rides')
+        .doc(widget.rideId)
+        .get();
+
+    if (!rideDoc.exists) {
+      if (mounted) {
+        showAppSnackBar(context, 'Ride not found.');
+      }
+      return;
+    }
+
+    final ride = Ride.fromFirestore(rideDoc);
+    if (!ride.includesUser(user.uid)) {
+      if (mounted) {
+        showAppSnackBar(context, 'Only approved riders can use the ride chat.');
+      }
+      return;
+    }
 
     await FirebaseFirestore.instance
         .collection('rides')
@@ -47,26 +67,6 @@ class _ChatScreenState extends State<ChatScreen> {
           'senderId': user.uid,
           'senderEmail': user.email,
         });
-
-    final rideDoc = await FirebaseFirestore.instance.collection('rides').doc(widget.rideId).get();
-    if (rideDoc.exists && rideDoc.data()?['leaderId'] != user.uid) {
-      final data = rideDoc.data()!;
-      final participants = data.containsKey('participants') ? List.from(data['participants']) : [];
-      final maxParticipants = data['maxParticipants'] ?? 4;
-      final leaderId = data['leaderId'];
-      
-      if (!participants.contains(user.uid) && participants.length < maxParticipants) {
-        await FirebaseFirestore.instance
-            .collection('rides')
-            .doc(widget.rideId)
-            .update({
-              'participants': FieldValue.arrayUnion([user.uid]),
-            });
-            
-        final passengerName = user.email?.split('@').first ?? 'A student';
-        await NotificationService.sendPassengerJoined(leaderId, passengerName, widget.rideDestination);
-      }
-    }
 
     _messageController.clear();
   }
@@ -214,56 +214,80 @@ class _ChatScreenState extends State<ChatScreen> {
                   },
                 ),
               ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
-                child: AppSurfaceCard(
-                  padding: const EdgeInsets.all(12),
-                  radius: 28,
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _messageController,
-                          minLines: 1,
-                          maxLines: 4,
-                          onSubmitted: (_) => _sendMessage(),
-                          decoration: const InputDecoration(
-                            hintText: 'Type a message',
-                            border: InputBorder.none,
-                            enabledBorder: InputBorder.none,
-                            focusedBorder: InputBorder.none,
-                            filled: false,
-                            contentPadding: EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 12,
+              StreamBuilder<Ride?>(
+                stream: RideRepositoryScope.of(
+                  context,
+                ).watchRide(widget.rideId),
+                builder: (context, rideSnapshot) {
+                  final ride = rideSnapshot.data;
+                  final canChat = ride?.includesUser(currentUser.uid) ?? false;
+
+                  return Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
+                    child: AppSurfaceCard(
+                      padding: const EdgeInsets.all(12),
+                      radius: 28,
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: _messageController,
+                              enabled: canChat,
+                              minLines: 1,
+                              maxLines: 4,
+                              onSubmitted: canChat
+                                  ? (_) => _sendMessage()
+                                  : null,
+                              decoration: InputDecoration(
+                                hintText: canChat
+                                    ? 'Type a message'
+                                    : 'Request approval before chatting',
+                                border: InputBorder.none,
+                                enabledBorder: InputBorder.none,
+                                focusedBorder: InputBorder.none,
+                                filled: false,
+                                contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 12,
+                                ),
+                              ),
                             ),
                           ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      DecoratedBox(
-                        decoration: BoxDecoration(
-                          gradient: AppColors.accentGradient,
-                          borderRadius: BorderRadius.circular(20),
-                          boxShadow: [
-                            BoxShadow(
-                              color: AppColors.primary.withValues(alpha: 0.2),
-                              blurRadius: 18,
-                              offset: const Offset(0, 10),
+                          const SizedBox(width: 8),
+                          DecoratedBox(
+                            decoration: BoxDecoration(
+                              gradient: canChat
+                                  ? AppColors.accentGradient
+                                  : const LinearGradient(
+                                      colors: [
+                                        Color(0xFF404A5D),
+                                        Color(0xFF404A5D),
+                                      ],
+                                    ),
+                              borderRadius: BorderRadius.circular(20),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: AppColors.primary.withValues(
+                                    alpha: 0.2,
+                                  ),
+                                  blurRadius: 18,
+                                  offset: const Offset(0, 10),
+                                ),
+                              ],
                             ),
-                          ],
-                        ),
-                        child: IconButton(
-                          onPressed: _sendMessage,
-                          icon: const Icon(
-                            Icons.send_rounded,
-                            color: Colors.white,
+                            child: IconButton(
+                              onPressed: canChat ? _sendMessage : null,
+                              icon: const Icon(
+                                Icons.send_rounded,
+                                color: Colors.white,
+                              ),
+                            ),
                           ),
-                        ),
+                        ],
                       ),
-                    ],
-                  ),
-                ),
+                    ),
+                  );
+                },
               ),
             ],
           ),

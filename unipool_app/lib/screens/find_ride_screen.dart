@@ -1,11 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:intl/intl.dart';
 import 'package:unipool/data/ride_locations.dart';
-import 'package:unipool/screens/chat_screen.dart';
+import 'package:unipool/models/ride.dart';
+import 'package:unipool/providers/ride_repository_scope.dart';
 import 'package:unipool/theme/app_theme.dart';
 import 'package:unipool/widgets/app_ui.dart';
-import 'package:unipool/models/ride.dart';
 import 'package:unipool/widgets/ride_card.dart';
 
 class FindRideScreen extends StatefulWidget {
@@ -39,35 +37,42 @@ class _FindRideScreenState extends State<FindRideScreen> {
     if (rideTime == null || rideTime.isEmpty) return false;
     final hour = _parseHour(rideTime);
     if (hour == null) return false;
-    
+
     switch (_timeFilter) {
-      case TimeFilter.morning: return hour >= 6 && hour < 12; // 6 AM - 11:59 AM
-      case TimeFilter.afternoon: return hour >= 12 && hour < 17; // 12 PM - 4:59 PM
-      case TimeFilter.evening: return hour >= 17 && hour < 21; // 5 PM - 8:59 PM
-      case TimeFilter.night: return hour >= 21 || hour < 6; // 9 PM - 5:59 AM
-      default: return true;
+      case TimeFilter.morning:
+        return hour >= 6 && hour < 12; // 6 AM - 11:59 AM
+      case TimeFilter.afternoon:
+        return hour >= 12 && hour < 17; // 12 PM - 4:59 PM
+      case TimeFilter.evening:
+        return hour >= 17 && hour < 21; // 5 PM - 8:59 PM
+      case TimeFilter.night:
+        return hour >= 21 || hour < 6; // 9 PM - 5:59 AM
+      default:
+        return true;
     }
   }
 
   String _timeFilterLabel(TimeFilter filter) {
     switch (filter) {
-      case TimeFilter.any: return 'Any time';
-      case TimeFilter.morning: return 'Morning';
-      case TimeFilter.afternoon: return 'Afternoon';
-      case TimeFilter.evening: return 'Evening';
-      case TimeFilter.night: return 'Night';
+      case TimeFilter.any:
+        return 'Any time';
+      case TimeFilter.morning:
+        return 'Morning';
+      case TimeFilter.afternoon:
+        return 'Afternoon';
+      case TimeFilter.evening:
+        return 'Evening';
+      case TimeFilter.night:
+        return 'Night';
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    Query query = FirebaseFirestore.instance
-        .collection('rides')
-        .where('status', isEqualTo: 'open');
-
-    if (_filterDestination != allLocationsLabel) {
-      query = query.where('destination', isEqualTo: _filterDestination);
-    }
+    final rideRepository = RideRepositoryScope.of(context);
+    final destinationFilter = _filterDestination == allLocationsLabel
+        ? null
+        : _filterDestination;
 
     return Scaffold(
       body: AppGradientBackground(
@@ -154,12 +159,18 @@ class _FindRideScreenState extends State<FindRideScreen> {
                                       label: Text(_timeFilterLabel(filter)),
                                       selected: isSelected,
                                       onSelected: (selected) {
-                                        if (selected) setState(() => _timeFilter = filter);
+                                        if (selected) {
+                                          setState(() => _timeFilter = filter);
+                                        }
                                       },
                                       selectedColor: AppColors.primary,
                                       labelStyle: TextStyle(
-                                        color: isSelected ? Colors.white : AppColors.ink,
-                                        fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                                        color: isSelected
+                                            ? Colors.white
+                                            : AppColors.ink,
+                                        fontWeight: isSelected
+                                            ? FontWeight.w700
+                                            : FontWeight.w500,
                                       ),
                                     ),
                                   );
@@ -171,8 +182,10 @@ class _FindRideScreenState extends State<FindRideScreen> {
                       ),
                     ),
                     Expanded(
-                      child: StreamBuilder<QuerySnapshot>(
-                        stream: query.snapshots(),
+                      child: StreamBuilder<List<Ride>>(
+                        stream: rideRepository.watchSearchingRides(
+                          destination: destinationFilter,
+                        ),
                         builder: (context, snapshot) {
                           if (snapshot.connectionState ==
                               ConnectionState.waiting) {
@@ -187,18 +200,23 @@ class _FindRideScreenState extends State<FindRideScreen> {
                             return const SizedBox.shrink();
                           }
 
-                          final docs = snapshot.data!.docs;
-                          final rides = docs.map((doc) => Ride.fromFirestore(doc)).toList();
+                          final rides = snapshot.data!;
 
                           final now = DateTime.now();
                           final today = DateTime(now.year, now.month, now.day);
 
-                          final futureRides = rides.where((r) {
-                            final rideDay = DateTime(r.rideDate.year, r.rideDate.month, r.rideDate.day);
-                            if (rideDay.isBefore(today)) return false;
-                            return _matchesTime(r.rideTime);
-                          }).toList()
-                            ..sort((a, b) => a.rideDate.compareTo(b.rideDate));
+                          final futureRides =
+                              rides.where((r) {
+                                final rideDay = DateTime(
+                                  r.rideDate.year,
+                                  r.rideDate.month,
+                                  r.rideDate.day,
+                                );
+                                if (rideDay.isBefore(today)) return false;
+                                return _matchesTime(r.rideTime);
+                              }).toList()..sort(
+                                (a, b) => a.rideDate.compareTo(b.rideDate),
+                              );
 
                           if (futureRides.isEmpty) {
                             return AppEmptyState(
@@ -219,7 +237,8 @@ class _FindRideScreenState extends State<FindRideScreen> {
                                 padding: const EdgeInsets.only(bottom: 14),
                                 child: StandardRideCard(
                                   ride: ride,
-                                  onTap: () => showRideDetailsSheet(context, ride),
+                                  onTap: () =>
+                                      showRideDetailsSheet(context, ride),
                                 ),
                               );
                             },

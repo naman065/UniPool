@@ -1,0 +1,96 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function rideDoc(rideId) {
+      return get(/databases/$(database)/documents/rides/$(rideId));
+    }
+
+    function isRideLeader(rideId) {
+      return signedIn() && request.auth.uid == rideDoc(rideId).data.leaderId;
+    }
+
+    function isRideParticipant(rideId, uid) {
+      return uid == rideDoc(rideId).data.leaderId ||
+        uid in rideDoc(rideId).data.acceptedMembers;
+    }
+
+    function ratingAggregateOnly() {
+      return request.resource.data.diff(resource.data).changedKeys().hasOnly([
+        'avgRating',
+        'ratingSum',
+        'totalRatings',
+      ]);
+    }
+
+    match /rides/{rideId} {
+      allow read: if signedIn();
+
+      allow create: if signedIn() &&
+        request.resource.data.leaderId == request.auth.uid;
+
+      allow update: if isRideLeader(rideId) || isSelfJoinRequest();
+
+      allow delete: if isRideLeader(rideId);
+
+      function isSelfJoinRequest() {
+        return signedIn() &&
+          request.auth.uid != resource.data.leaderId &&
+          request.resource.data.leaderId == resource.data.leaderId &&
+          request.resource.data.status == resource.data.status &&
+          request.resource.data.acceptedMembers == resource.data.acceptedMembers &&
+          request.resource.data.participants == resource.data.participants &&
+          request.resource.data.rejectedMembers == resource.data.rejectedMembers &&
+          request.resource.data.pendingRequests.hasAll(resource.data.pendingRequests) &&
+          request.auth.uid in request.resource.data.pendingRequests &&
+          !(request.auth.uid in resource.data.pendingRequests) &&
+          !(request.auth.uid in resource.data.rejectedMembers);
+      }
+
+      match /messages/{messageId} {
+        allow read: if signedIn();
+        allow create: if signedIn() &&
+          isRideParticipant(rideId, request.auth.uid);
+      }
+
+      match /ratings/{ratingId} {
+        allow read: if signedIn() &&
+          isRideParticipant(rideId, request.auth.uid);
+
+        allow create: if signedIn() &&
+          !exists(/databases/$(database)/documents/rides/$(rideId)/ratings/$(ratingId)) &&
+          rideDoc(rideId).data.status == 'completed' &&
+          request.auth.uid == request.resource.data.fromUid &&
+          request.resource.data.fromUid != request.resource.data.toUid &&
+          isRideParticipant(rideId, request.resource.data.fromUid) &&
+          isRideParticipant(rideId, request.resource.data.toUid);
+      }
+    }
+
+    match /users/{userId} {
+      allow read: if signedIn();
+
+      allow create: if signedIn() && request.auth.uid == userId;
+
+      allow update: if signedIn() && (
+        request.auth.uid == userId ||
+        (
+          ratingAggregateOnly() &&
+          request.resource.data.totalRatings == resource.data.totalRatings + 1 &&
+          request.resource.data.ratingSum > resource.data.ratingSum &&
+          request.resource.data.avgRating ==
+            request.resource.data.ratingSum / request.resource.data.totalRatings
+        )
+      );
+
+      match /notifications/{notificationId} {
+        allow read, create, update, delete: if signedIn() &&
+          request.auth.uid == userId;
+      }
+    }
+  }
+}

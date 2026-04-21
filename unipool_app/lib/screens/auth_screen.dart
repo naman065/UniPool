@@ -237,6 +237,9 @@ class _AuthScreenState extends State<AuthScreen> {
             'uid': cred.user!.uid,
             'email': email,
             'name': email.split('@').first,
+            'avgRating': 0.0,
+            'ratingSum': 0.0,
+            'totalRatings': 0,
             'ridesCompleted': 0,
             'createdAt': Timestamp.now(),
           });
@@ -291,6 +294,9 @@ class _AuthScreenState extends State<AuthScreen> {
       'email': user.email,
       'name': user.displayName ?? user.email?.split('@').first ?? 'Student',
       'photoUrl': user.photoURL,
+      'avgRating': 0.0,
+      'ratingSum': 0.0,
+      'totalRatings': 0,
       'ridesCompleted': 0,
       'createdAt': Timestamp.now(),
     });

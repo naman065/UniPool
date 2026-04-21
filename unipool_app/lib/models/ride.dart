@@ -1,5 +1,38 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+enum RideStatus { searching, ongoing, completed }
+
+extension RideStatusX on RideStatus {
+  String get value => name;
+
+  String get label {
+    switch (this) {
+      case RideStatus.searching:
+        return 'searching';
+      case RideStatus.ongoing:
+        return 'ongoing';
+      case RideStatus.completed:
+        return 'completed';
+    }
+  }
+
+  static RideStatus fromValue(String? value) {
+    switch (value) {
+      case 'open':
+      case 'searching':
+        return RideStatus.searching;
+      case 'ongoing':
+        return RideStatus.ongoing;
+      case 'completed':
+        return RideStatus.completed;
+      default:
+        return RideStatus.searching;
+    }
+  }
+}
+
+enum RideMembershipStatus { none, pending, accepted, rejected, leader }
+
 class Ride {
   final String id;
   final String source;
@@ -9,11 +42,14 @@ class Ride {
   final String? fare;
   final String leaderId;
   final String leaderName;
-  final String status;
-  final List<String> participants;
-  final int maxParticipants;
+  final RideStatus status;
+  final List<String> pendingRequests;
+  final List<String> acceptedMembers;
+  final List<String> rejectedMembers;
+  final int maxSeats;
+  final DateTime? createdAt;
 
-  Ride({
+  const Ride({
     required this.id,
     required this.source,
     required this.destination,
@@ -21,49 +57,125 @@ class Ride {
     required this.leaderId,
     required this.leaderName,
     required this.status,
-    required this.participants,
-    required this.maxParticipants,
+    required this.pendingRequests,
+    required this.acceptedMembers,
+    required this.rejectedMembers,
+    required this.maxSeats,
     this.rideTime,
     this.fare,
+    this.createdAt,
   });
 
-  /// Factory constructor to safely parse raw Firestore JSON data.
   factory Ride.fromFirestore(DocumentSnapshot doc) {
-    final data = doc.data() as Map<String, dynamic>? ?? {};
-
-    DateTime parsedDate;
-    try {
-      parsedDate = data['rideDate'] != null 
-          ? DateTime.parse(data['rideDate']) 
-          : DateTime.now();
-    } catch (_) {
-      parsedDate = DateTime.now();
-    }
+    final data = doc.data() as Map<String, dynamic>? ?? <String, dynamic>{};
 
     return Ride(
       id: doc.id,
-      source: data['source'] ?? 'Unknown',
-      destination: data['destination'] ?? 'Unknown',
-      rideDate: parsedDate,
-      leaderId: data['leaderId'] ?? '',
-      leaderName: data['leaderName'] ?? 'Student',
-      status: data['status'] ?? 'open',
-      participants: data.containsKey('participants') 
-          ? List<String>.from(data['participants']) 
-          : [],
-      maxParticipants: data['maxParticipants'] ?? 4,
-      rideTime: data['rideTime'],
-      fare: data['fare'],
+      source: (data['source'] as String?)?.trim().isNotEmpty == true
+          ? data['source'] as String
+          : 'Unknown',
+      destination: (data['destination'] as String?)?.trim().isNotEmpty == true
+          ? data['destination'] as String
+          : 'Unknown',
+      rideDate: _parseDate(data['rideDate']),
+      leaderId: (data['leaderId'] as String?) ?? '',
+      leaderName: (data['leaderName'] as String?)?.trim().isNotEmpty == true
+          ? data['leaderName'] as String
+          : 'Student',
+      status: RideStatusX.fromValue(data['status'] as String?),
+      pendingRequests: _parseStringList(data['pendingRequests']),
+      acceptedMembers: _parseStringList(
+        data['acceptedMembers'] ?? data['participants'],
+      ),
+      rejectedMembers: _parseStringList(data['rejectedMembers']),
+      maxSeats:
+          (data['maxSeats'] as num?)?.toInt() ??
+          (data['maxParticipants'] as num?)?.toInt() ??
+          4,
+      rideTime: data['rideTime'] as String?,
+      fare: data['fare'] as String?,
+      createdAt: _parseNullableDate(data['createdAt']),
     );
   }
 
-  /// True if the ride is still marked as 'open'
-  bool get isOpen => status == 'open';
+  bool get isOpen => status == RideStatus.searching;
 
-  /// Total number of passengers who have joined the ride
-  int get participantCount => participants.length;
+  bool get isSearching => status == RideStatus.searching;
 
-  /// Converts the Ride object back into a Map for saving to Firestore.
+  bool get isOngoing => status == RideStatus.ongoing;
+
+  bool get isCompleted => status == RideStatus.completed;
+
+  int get participantCount => acceptedMembers.length;
+
+  int get maxParticipants => maxSeats;
+
+  List<String> get participants => acceptedMembers;
+
+  bool get hasAvailableSeats => participantCount < maxSeats;
+
+  List<String> get allParticipantIds {
+    final ids = <String>{leaderId, ...acceptedMembers};
+    ids.removeWhere((id) => id.trim().isEmpty);
+    return ids.toList();
+  }
+
+  RideMembershipStatus membershipStatusFor(String uid) {
+    if (uid == leaderId) {
+      return RideMembershipStatus.leader;
+    }
+    if (acceptedMembers.contains(uid)) {
+      return RideMembershipStatus.accepted;
+    }
+    if (pendingRequests.contains(uid)) {
+      return RideMembershipStatus.pending;
+    }
+    if (rejectedMembers.contains(uid)) {
+      return RideMembershipStatus.rejected;
+    }
+    return RideMembershipStatus.none;
+  }
+
+  bool includesUser(String uid) {
+    final status = membershipStatusFor(uid);
+    return status == RideMembershipStatus.leader ||
+        status == RideMembershipStatus.accepted;
+  }
+
+  Ride copyWith({
+    String? id,
+    String? source,
+    String? destination,
+    DateTime? rideDate,
+    String? rideTime,
+    String? fare,
+    String? leaderId,
+    String? leaderName,
+    RideStatus? status,
+    List<String>? pendingRequests,
+    List<String>? acceptedMembers,
+    List<String>? rejectedMembers,
+    int? maxSeats,
+    DateTime? createdAt,
+  }) {
+    return Ride(
+      id: id ?? this.id,
+      source: source ?? this.source,
+      destination: destination ?? this.destination,
+      rideDate: rideDate ?? this.rideDate,
+      leaderId: leaderId ?? this.leaderId,
+      leaderName: leaderName ?? this.leaderName,
+      status: status ?? this.status,
+      pendingRequests: pendingRequests ?? this.pendingRequests,
+      acceptedMembers: acceptedMembers ?? this.acceptedMembers,
+      rejectedMembers: rejectedMembers ?? this.rejectedMembers,
+      maxSeats: maxSeats ?? this.maxSeats,
+      rideTime: rideTime ?? this.rideTime,
+      fare: fare ?? this.fare,
+      createdAt: createdAt ?? this.createdAt,
+    );
+  }
+
   Map<String, dynamic> toMap() {
     return {
       'source': source,
@@ -71,11 +183,48 @@ class Ride {
       'rideDate': rideDate.toIso8601String(),
       'leaderId': leaderId,
       'leaderName': leaderName,
-      'status': status,
-      'participants': participants,
-      'maxParticipants': maxParticipants,
+      'status': status.value,
+      'pendingRequests': pendingRequests,
+      'acceptedMembers': acceptedMembers,
+      'participants': acceptedMembers,
+      'rejectedMembers': rejectedMembers,
+      'maxSeats': maxSeats,
+      'maxParticipants': maxSeats,
       if (rideTime != null && rideTime!.isNotEmpty) 'rideTime': rideTime,
       if (fare != null && fare!.isNotEmpty) 'fare': fare,
+      if (createdAt != null) 'createdAt': Timestamp.fromDate(createdAt!),
     };
+  }
+
+  static DateTime _parseDate(dynamic value) {
+    return _parseNullableDate(value) ?? DateTime.now();
+  }
+
+  static DateTime? _parseNullableDate(dynamic value) {
+    if (value is Timestamp) {
+      return value.toDate();
+    }
+    if (value is DateTime) {
+      return value;
+    }
+    if (value is String && value.isNotEmpty) {
+      try {
+        return DateTime.parse(value);
+      } catch (_) {
+        return null;
+      }
+    }
+    return null;
+  }
+
+  static List<String> _parseStringList(dynamic value) {
+    if (value is Iterable) {
+      return value
+          .whereType<Object?>()
+          .map((item) => item?.toString() ?? '')
+          .where((item) => item.trim().isNotEmpty)
+          .toList();
+    }
+    return <String>[];
   }
 }
