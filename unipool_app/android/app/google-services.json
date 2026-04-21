@@ -12,7 +12,20 @@
           "package_name": "com.example.unipool"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "142144635414-66am9enah6svijnnntp6eb1igv4sltvc.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.unipool",
+            "certificate_hash": "f1956852c7c5ff85cb6ab3ee4e310a56dcedc129"
+          }
+        },
+        {
+          "client_id": "142144635414-jh3k2rvk11ichepelphj90thnm8ldv6i.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyA-cL_OwDL1c4oUUzVPIknLkRiSSr991xQ"
@@ -20,7 +33,12 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "142144635414-jh3k2rvk11ichepelphj90thnm8ldv6i.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
         }
       }
     }
