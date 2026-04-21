@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -20,6 +21,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   bool _isUploading = false;
   bool _isSaving = false;
+  bool _isInitialLoad = true;
+  StreamSubscription<DocumentSnapshot>? _userSubscription;
   String? _imageUrl;
   int _ridesCompleted = 0;
   double _avgRating = 0.0;
@@ -38,28 +41,32 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   @override
   void dispose() {
+    _userSubscription?.cancel();
     _nameController.dispose();
     super.dispose();
   }
 
-  Future<void> _loadUserData() async {
+  void _loadUserData() {
     final user = FirebaseAuth.instance.currentUser!;
-    final userData = await FirebaseFirestore.instance
+    _userSubscription = FirebaseFirestore.instance
         .collection('users')
         .doc(user.uid)
-        .get();
-    final data = userData.data();
+        .snapshots()
+        .listen((userData) {
+      if (!mounted) return;
+      final data = userData.data();
+      if (data == null) return;
 
-    if (!mounted || data == null) {
-      return;
-    }
-
-    setState(() {
-      _nameController.text = (data['name'] as String?) ?? '';
-      _imageUrl = data['photoUrl'] as String?;
-      _ridesCompleted = (data['ridesCompleted'] as num?)?.toInt() ?? 0;
-      _avgRating = (data['avgRating'] as num?)?.toDouble() ?? 0.0;
-      _totalRatings = (data['totalRatings'] as num?)?.toInt() ?? 0;
+      setState(() {
+        if (_isInitialLoad) {
+          _nameController.text = (data['name'] as String?) ?? '';
+          _isInitialLoad = false;
+        }
+        _imageUrl = data['photoUrl'] as String?;
+        _ridesCompleted = (data['ridesCompleted'] as num?)?.toInt() ?? 0;
+        _avgRating = (data['avgRating'] as num?)?.toDouble() ?? 0.0;
+        _totalRatings = (data['totalRatings'] as num?)?.toInt() ?? 0;
+      });
     });
   }
 

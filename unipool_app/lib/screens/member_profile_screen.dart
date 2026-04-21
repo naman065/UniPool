@@ -16,10 +16,11 @@ class MemberProfileScreen extends StatelessWidget {
   final String rideId;
   final String memberUid;
 
-  Future<_MemberProfileState> _loadProfile(BuildContext context) async {
+  Stream<_MemberProfileState> _watchProfile(BuildContext context) async* {
     final currentUser = FirebaseAuth.instance.currentUser;
     if (currentUser == null) {
-      return const _MemberProfileState.unauthorized();
+      yield const _MemberProfileState.unauthorized();
+      return;
     }
 
     final repository = UserRepositoryScope.of(context);
@@ -30,15 +31,16 @@ class MemberProfileScreen extends StatelessWidget {
     );
 
     if (!canAccess) {
-      return const _MemberProfileState.unauthorized();
+      yield const _MemberProfileState.unauthorized();
+      return;
     }
 
-    final user = await repository.fetchUser(memberUid);
-    if (user == null) {
-      return const _MemberProfileState.missing();
-    }
-
-    return _MemberProfileState.loaded(user);
+    yield* repository.watchUser(memberUid).map((user) {
+      if (user == null) {
+        return const _MemberProfileState.missing();
+      }
+      return _MemberProfileState.loaded(user);
+    });
   }
 
   @override
@@ -64,8 +66,8 @@ class MemberProfileScreen extends StatelessWidget {
                 ),
               ),
               Expanded(
-                child: FutureBuilder<_MemberProfileState>(
-                  future: _loadProfile(context),
+                child: StreamBuilder<_MemberProfileState>(
+                  stream: _watchProfile(context),
                   builder: (context, snapshot) {
                     if (snapshot.connectionState == ConnectionState.waiting) {
                       return const Center(

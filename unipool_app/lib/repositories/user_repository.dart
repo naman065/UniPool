@@ -40,6 +40,25 @@ class UserRepository {
     return user;
   }
 
+  Stream<UserModel?> watchUser(String uid) {
+    final trimmedUid = uid.trim();
+    if (trimmedUid.isEmpty) {
+      return Stream.value(null);
+    }
+
+    return _users.doc(trimmedUid).snapshots().map((snapshot) {
+      if (!snapshot.exists) {
+        final fallback = UserModel.fallback(trimmedUid);
+        _userCache[trimmedUid] = fallback;
+        return fallback;
+      }
+
+      final user = UserModel.fromFirestore(snapshot);
+      _userCache[trimmedUid] = user;
+      return user;
+    });
+  }
+
   Future<List<UserModel>> fetchUsers(
     Iterable<String> uids, {
     bool forceRefresh = false,
