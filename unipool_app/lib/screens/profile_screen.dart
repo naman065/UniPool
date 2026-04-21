@@ -22,6 +22,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
   bool _isSaving = false;
   String? _imageUrl;
   int _ridesCompleted = 0;
+  double _avgRating = 0.0;
+  int _totalRatings = 0;
 
   @override
   void initState() {
@@ -56,6 +58,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
       _nameController.text = (data['name'] as String?) ?? '';
       _imageUrl = data['photoUrl'] as String?;
       _ridesCompleted = (data['ridesCompleted'] as num?)?.toInt() ?? 0;
+      _avgRating = (data['avgRating'] as num?)?.toDouble() ?? 0.0;
+      _totalRatings = (data['totalRatings'] as num?)?.toInt() ?? 0;
     });
   }
 
@@ -250,6 +254,48 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      AppSurfaceCard(
+                        child: Row(
+                          children: [
+                            const AppIconBadge(
+                              icon: Icons.star_rate_rounded,
+                              color: AppColors.warning,
+                              size: 24,
+                            ),
+                            const SizedBox(width: 14),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text(
+                                    'Overall rating',
+                                    style: TextStyle(
+                                      color: AppColors.muted,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    _totalRatings > 0 ? _avgRating.toStringAsFixed(1) : 'No ratings',
+                                    style: TextStyle(
+                                      color: AppColors.ink,
+                                      fontSize: _totalRatings > 0 ? 28 : 20,
+                                      fontWeight: FontWeight.w900,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            if (_totalRatings > 0)
+                              AppPill(
+                                label: '$_totalRatings review${_totalRatings == 1 ? '' : 's'}',
+                                foregroundColor: AppColors.warning,
+                                backgroundColor: AppColors.warning.withOpacity(0.12),
+                              ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 20),
                       AppSurfaceCard(
                         child: Row(
                           children: [
