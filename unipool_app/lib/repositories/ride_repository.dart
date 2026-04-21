@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:unipool/models/notification.dart';
 import 'package:unipool/models/ride.dart';
+import 'package:unipool/services/notification_service.dart';
 
 class RideRepository {
   RideRepository({FirebaseFirestore? firestore})
@@ -143,16 +144,17 @@ class RideRepository {
       final leaderNotificationRef = _notificationsFor(ride.leaderId).doc();
 
       transaction.update(rideRef, {'pendingRequests': updatedPending});
-      transaction.set(leaderNotificationRef, {
-        'title': 'New join request',
-        'body': '$displayName wants to join your ride to ${ride.destination}.',
-        'type': AppNotification.joinRequestType,
-        'senderUid': userId,
-        'rideId': ride.id,
-        'relatedRideId': ride.id,
-        'isRead': false,
-        'createdAt': FieldValue.serverTimestamp(),
-      });
+      transaction.set(
+        leaderNotificationRef,
+        NotificationService.buildPayload(
+          title: 'New join request',
+          body: '$displayName wants to join your ride to ${ride.destination}.',
+          type: AppNotification.joinRequestType,
+          senderUid: userId,
+          rideId: ride.id,
+          createdAt: FieldValue.serverTimestamp(),
+        ),
+      );
     });
   }
 
@@ -185,6 +187,7 @@ class RideRepository {
         ..remove(memberUid);
       final updatedAccepted = List<String>.from(ride.acceptedMembers)
         ..add(memberUid);
+      final memberNotificationRef = _notificationsFor(memberUid).doc();
 
       transaction.update(rideRef, {
         'pendingRequests': updatedPending,
@@ -193,6 +196,18 @@ class RideRepository {
         'rejectedMembers': List<String>.from(ride.rejectedMembers)
           ..remove(memberUid),
       });
+      transaction.set(
+        memberNotificationRef,
+        NotificationService.buildPayload(
+          title: 'Request accepted',
+          body:
+              '${ride.leaderName} accepted your request for the ride to ${ride.destination}.',
+          type: AppNotification.joinAcceptedType,
+          senderUid: leaderUid,
+          rideId: ride.id,
+          createdAt: FieldValue.serverTimestamp(),
+        ),
+      );
     });
   }
 
@@ -242,17 +257,39 @@ class RideRepository {
       }
 
       final ride = Ride.fromFirestore(rideSnapshot);
+      if (ride.leaderId == userId) {
+        throw StateError('Ride leaders cannot leave their own ride.');
+      }
       if (ride.isCompleted) {
         throw StateError('Completed rides can no longer be changed.');
+      }
+      if (!ride.acceptedMembers.contains(userId)) {
+        throw StateError('You are not currently part of this ride.');
       }
 
       final updatedAccepted = List<String>.from(ride.acceptedMembers)
         ..remove(userId);
+      final riderRef = _users.doc(userId);
+      final riderSnapshot = await transaction.get(riderRef);
+      final riderData = riderSnapshot.data() ?? <String, dynamic>{};
+      final riderName = _displayNameFromUserData(riderData);
+      final leaderNotificationRef = _notificationsFor(ride.leaderId).doc();
 
       transaction.update(rideRef, {
         'acceptedMembers': updatedAccepted,
         'participants': updatedAccepted,
       });
+      transaction.set(
+        leaderNotificationRef,
+        NotificationService.buildPayload(
+          title: 'Rider left',
+          body: '$riderName left your ride to ${ride.destination}.',
+          type: AppNotification.memberLeftType,
+          senderUid: userId,
+          rideId: ride.id,
+          createdAt: FieldValue.serverTimestamp(),
+        ),
+      );
     });
   }
 
@@ -353,5 +390,19 @@ class RideRepository {
     required String toUid,
   }) {
     return '${rideId}_${fromUid}_$toUid';
+  }
+
+  String _displayNameFromUserData(Map<String, dynamic> data) {
+    final name = (data['name'] as String?)?.trim();
+    if (name != null && name.isNotEmpty) {
+      return name;
+    }
+
+    final email = (data['email'] as String?)?.trim();
+    if (email != null && email.contains('@')) {
+      return email.split('@').first;
+    }
+
+    return 'A rider';
   }
 }

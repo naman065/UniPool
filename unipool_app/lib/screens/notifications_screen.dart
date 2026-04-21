@@ -158,11 +158,19 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                                     AppIconBadge(
                                       icon: notif.isJoinRequest
                                           ? Icons.person_add_alt_rounded
+                                          : notif.isJoinAccepted
+                                          ? Icons.check_circle_outline_rounded
+                                          : notif.isMemberLeft
+                                          ? Icons.exit_to_app_rounded
                                           : Icons.info_outline_rounded,
                                       color: notif.isRead
                                           ? AppColors.muted
                                           : notif.isJoinRequest
                                           ? AppColors.secondary
+                                          : notif.isJoinAccepted
+                                          ? AppColors.success
+                                          : notif.isMemberLeft
+                                          ? AppColors.warning
                                           : AppColors.primary,
                                     ),
                                     const SizedBox(width: 14),

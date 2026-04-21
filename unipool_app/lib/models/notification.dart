@@ -2,6 +2,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 class AppNotification {
   static const String joinRequestType = 'join_request';
+  static const String joinAcceptedType = 'join_accepted';
+  static const String memberLeftType = 'member_left';
   static const String genericType = 'generic';
 
   final String id;
@@ -25,6 +27,10 @@ class AppNotification {
   });
 
   bool get isJoinRequest => type == joinRequestType;
+
+  bool get isJoinAccepted => type == joinAcceptedType;
+
+  bool get isMemberLeft => type == memberLeftType;
 
   factory AppNotification.fromFirestore(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>? ?? {};
